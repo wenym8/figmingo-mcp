@@ -2,7 +2,7 @@
 # figmingo-mcp one-command installer (macOS / Linux).
 #   curl -fsSL https://raw.githubusercontent.com/<owner>/figmingo-mcp/main/scripts/install.sh | bash
 # or locally:
-#   bash scripts/install.sh [--yes] [--clients cursor,claude-code,claude-desktop,vscode] [--token <FIGMA_PAT>] [--no-install]
+#   bash scripts/install.sh [--yes] [--clients cursor,claude-code,claude-desktop,vscode,kimi,codex] [--token <FIGMA_PAT>] [--no-install]
 set -euo pipefail
 
 PKG="figmingo-mcp"
@@ -88,12 +88,61 @@ write_config() {
   info "wrote $name config → $path"
 }
 
+# --- 4b. Codex CLI config (~/.codex/config.toml, TOML) -----------------------
+# Only ever touches the [mcp_servers.figmingo] section; the rest of the file is
+# preserved byte-for-byte. Backs up the original to config.toml.figmingo-bak on
+# first write. Idempotent: re-running replaces the section in place.
+write_codex_config() {
+  local path="$1"
+  mkdir -p "$(dirname "$path")"
+  if [ -f "$path" ] && [ ! -f "$path.figmingo-bak" ]; then
+    cp "$path" "$path.figmingo-bak"
+    info "backed up existing config → $path.figmingo-bak"
+  fi
+  local cmd args_toml=""
+  if [ "$CMD" = "npx figmingo-mcp" ]; then
+    cmd="npx"; args_toml='"-y", "figmingo-mcp"'
+  else
+    cmd="$CMD"
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  if [ -f "$path" ]; then
+    # Drop any existing [mcp_servers.figmingo] (+ .env subtable) section and
+    # trim trailing blank lines; keep everything else untouched.
+    awk '
+      /^\[mcp_servers\.figmingo(\.[^]]*)?\][[:space:]]*$/ { skip=1; next }
+      /^\[/ { skip=0 }
+      !skip { lines[++n] = $0 }
+      END {
+        last = n
+        while (last > 0 && lines[last] ~ /^[[:space:]]*$/) last--
+        for (i = 1; i <= last; i++) print lines[i]
+      }
+    ' "$path" > "$tmp"
+  else
+    : > "$tmp"
+  fi
+  if [ -s "$tmp" ]; then printf '\n' >> "$tmp"; fi
+  {
+    printf '[mcp_servers.figmingo]\n'
+    printf 'command = "%s"\n' "$cmd"
+    printf 'args = [%s]\n' "$args_toml"
+    if [ -n "$TOKEN" ]; then
+      printf '\n[mcp_servers.figmingo.env]\n'
+      printf 'FIGMA_API_KEY = "%s"\n' "$TOKEN"
+    fi
+  } >> "$tmp"
+  mv "$tmp" "$path"
+  info "wrote Codex config → $path"
+}
+
 pick_clients() {
   if [ -n "$CLIENTS" ]; then echo "$CLIENTS"; return; fi
-  if [ "$YES" -eq 1 ] || [ ! -t 0 ]; then echo "cursor,claude-code,claude-desktop,vscode"; return; fi
-  printf 'Configure which clients? [cursor,claude-code,claude-desktop,vscode] (comma list, empty = all): '
+  if [ "$YES" -eq 1 ] || [ ! -t 0 ]; then echo "cursor,claude-code,claude-desktop,vscode,kimi,codex"; return; fi
+  printf 'Configure which clients? [cursor,claude-code,claude-desktop,vscode,kimi,codex] (comma list, empty = all): '
   local ans; read -r ans || true
-  echo "${ans:-cursor,claude-code,claude-desktop,vscode}"
+  echo "${ans:-cursor,claude-code,claude-desktop,vscode,kimi,codex}"
 }
 
 IFS=',' read -ra WANT <<< "$(pick_clients)"
@@ -111,6 +160,8 @@ for c in "${WANT[@]}"; do
         Darwin) write_config "VS Code" "$HOME/Library/Application Support/Code/User/mcp.json" ;;
         *)      write_config "VS Code" "$HOME/.config/Code/User/mcp.json" ;;
       esac ;;
+    kimi)           write_config "Kimi CLI" "$HOME/.kimi/mcp.json" ;;
+    codex)          write_codex_config "$HOME/.codex/config.toml" ;;
     *) warn "unknown client '$c' — skipped" ;;
   esac
 done
@@ -140,7 +191,7 @@ Next steps:
   1. Get a Figma Personal Access Token:
        Figma → Settings → Security → Personal access tokens → Generate new token
      (scopes: file content read, file metadata read — dev resources optional)
-  2. Restart your AI client (Cursor / Claude Code / Claude Desktop / VS Code).
+  2. Restart your AI client (Cursor / Claude Code / Claude Desktop / VS Code / Kimi CLI / Codex).
      The MCP server starts automatically via: $CMD
   3. (Write tools) In Figma desktop:
        Plugins → Development → Import plugin from manifest…

@@ -47,7 +47,10 @@ iwr -useb https://raw.githubusercontent.com/<owner>/figmingo-mcp/main/scripts/in
 
 The installer checks Node ≥ 18, installs the package, writes MCP config into
 **Cursor** (`~/.cursor/mcp.json`), **Claude Code** (`~/.claude.json`),
-**Claude Desktop**, and **VS Code**, copies the companion plugin to
+**Claude Desktop**, **VS Code**, **Kimi CLI** (`~/.kimi/mcp.json`), and
+**Codex CLI** (`~/.codex/config.toml`, TOML — only the
+`[mcp_servers.figmingo]` section is touched; the original is backed up to
+`config.toml.figmingo-bak`), copies the companion plugin to
 `~/.figmingo/plugin`, and prints next steps.
 
 Manual setup (any client):
@@ -63,6 +66,22 @@ Manual setup (any client):
   }
 }
 ```
+
+- **Kimi CLI** — same JSON shape in `~/.kimi/mcp.json` (merge into `mcpServers`).
+- **Codex CLI** — TOML in `~/.codex/config.toml`:
+
+  ```toml
+  [mcp_servers.figmingo]
+  command = "figmingo-mcp"
+  args = []
+
+  [mcp_servers.figmingo.env]
+  FIGMA_API_KEY = "figd_..."
+  ```
+
+  (omit the `[mcp_servers.figmingo.env]` table if you configure the token
+  another way; use `command = "npx"`, `args = ["-y", "figmingo-mcp"]` for a
+  zero-install run)
 
 Get a Personal Access Token: **Figma → Settings → Security → Personal access
 tokens → Generate new token** (read scopes are enough for the read tools).
@@ -186,8 +205,9 @@ acceptance plan.
    ```
 
    Windows 用 `scripts/install.ps1`。安装器会检测 Node ≥ 18、全局安装包、写入
-   Cursor / Claude Code / Claude Desktop / VS Code 的 MCP 配置，并把伴侣插件复制到
-   `~/.figmingo/plugin`。
+   Cursor / Claude Code / Claude Desktop / VS Code / Kimi CLI（`~/.kimi/mcp.json`）/
+   Codex CLI（`~/.codex/config.toml`，TOML，只改 `[mcp_servers.figmingo]` 段并自动备份）
+   的 MCP 配置，并把伴侣插件复制到 `~/.figmingo/plugin`。
 
 2. **获取 Figma PAT**：Figma → 设置 → 安全 → Personal access tokens → 生成新 token
    （读工具只需读权限）。写进 MCP 配置的 `env.FIGMA_API_KEY`，或导出环境变量。

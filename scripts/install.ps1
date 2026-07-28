@@ -1,7 +1,7 @@
 # figmingo-mcp one-command installer (Windows).
 #   iwr -useb https://raw.githubusercontent.com/<owner>/figmingo-mcp/main/scripts/install.ps1 | iex
 # or locally:
-#   powershell -ExecutionPolicy Bypass -File scripts/install.ps1 [-Yes] [-Clients cursor,claude-code] [-Token <FIGMA_PAT>] [-NoInstall]
+#   powershell -ExecutionPolicy Bypass -File scripts/install.ps1 [-Yes] [-Clients cursor,claude-code,kimi,codex] [-Token <FIGMA_PAT>] [-NoInstall]
 param(
   [switch]$Yes,
   [string]$Clients = "",
@@ -42,8 +42,8 @@ if (-not $NoInstall) {
 } else {
   Info "Skipping package install (-NoInstall)"
 }
-$Cmd = (Get-Command figmingo-mcp -ErrorAction SilentlyContinue)?.Source
-if (-not $Cmd) { $Cmd = "npx figmingo-mcp" }
+$CmdObj = Get-Command figmingo-mcp -ErrorAction SilentlyContinue
+if ($CmdObj) { $Cmd = $CmdObj.Source } else { $Cmd = "npx figmingo-mcp" }
 
 # --- 3. Figma token ----------------------------------------------------------
 if (-not $Token -and $env:FIGMA_API_KEY) { $Token = $env:FIGMA_API_KEY }
@@ -61,10 +61,12 @@ function Write-Config($name, $path) {
     $entry = @{ command = $Cmd }
   }
   if ($Token) { $entry.env = @{ FIGMA_API_KEY = $Token } }
-  if (Test-Path $path) {
-    $cfg = Get-Content $path -Raw | ConvertFrom-Json
-  } else {
+  $raw = ""
+  if (Test-Path $path) { $raw = Get-Content $path -Raw }
+  if ([string]::IsNullOrWhiteSpace($raw)) {
     $cfg = [pscustomobject]@{}
+  } else {
+    $cfg = $raw | ConvertFrom-Json
   }
   if (-not $cfg.mcpServers) { $cfg | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{}) }
   $cfg.mcpServers | Add-Member -NotePropertyName "figmingo" -NotePropertyValue $entry -Force
@@ -72,11 +74,51 @@ function Write-Config($name, $path) {
   Info "wrote $name config -> $path"
 }
 
+# Codex CLI config (~/.codex/config.toml, TOML). Only ever touches the
+# [mcp_servers.figmingo] section (incl. its .env subtable); the rest of the
+# file is preserved. Backs up the original to config.toml.figmingo-bak on
+# first write. Idempotent: re-running replaces the section in place.
+function Write-CodexConfig($path) {
+  $dir = Split-Path $path -Parent
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $tomlCmd = $Cmd
+  $tomlArgs = @()
+  if ($Cmd -eq "npx figmingo-mcp") { $tomlCmd = "npx"; $tomlArgs = @("-y", "figmingo-mcp") }
+  $lines = @()
+  if (Test-Path $path) {
+    if (-not (Test-Path "$path.figmingo-bak")) {
+      Copy-Item $path "$path.figmingo-bak"
+      Info "backed up existing config -> $path.figmingo-bak"
+    }
+    $lines = @(Get-Content $path)
+  }
+  $out = New-Object System.Collections.Generic.List[string]
+  $skip = $false
+  foreach ($line in $lines) {
+    if ($line -match '^\[mcp_servers\.figmingo(\.[^\]]*)?\]\s*$') { $skip = $true; continue }
+    if ($line -match '^\[') { $skip = $false }
+    if (-not $skip) { $out.Add($line) }
+  }
+  while ($out.Count -gt 0 -and $out[$out.Count - 1] -match '^\s*$') { $out.RemoveAt($out.Count - 1) }
+  if ($out.Count -gt 0) { $out.Add("") }
+  $out.Add("[mcp_servers.figmingo]")
+  $out.Add("command = `"$tomlCmd`"")
+  $argsToml = ($tomlArgs | ForEach-Object { "`"$_`"" }) -join ", "
+  $out.Add("args = [$argsToml]")
+  if ($Token) {
+    $out.Add("")
+    $out.Add("[mcp_servers.figmingo.env]")
+    $out.Add("FIGMA_API_KEY = `"$Token`"")
+  }
+  Set-Content -Path $path -Value $out -Encoding UTF8
+  Info "wrote Codex config -> $path"
+}
+
 if (-not $Clients) {
-  if ($Yes) { $Clients = "cursor,claude-code,claude-desktop,vscode" }
+  if ($Yes) { $Clients = "cursor,claude-code,claude-desktop,vscode,kimi,codex" }
   else {
-    $ans = Read-Host "Configure which clients? [cursor,claude-code,claude-desktop,vscode] (comma list, empty = all)"
-    $Clients = ($ans ? $ans : "cursor,claude-code,claude-desktop,vscode")
+    $ans = Read-Host "Configure which clients? [cursor,claude-code,claude-desktop,vscode,kimi,codex] (comma list, empty = all)"
+    if ([string]::IsNullOrWhiteSpace($ans)) { $Clients = "cursor,claude-code,claude-desktop,vscode,kimi,codex" } else { $Clients = $ans }
   }
 }
 
@@ -86,6 +128,8 @@ foreach ($c in $Clients.Split(",")) {
     "claude-code"    { Write-Config "Claude Code" (Join-Path $HOME ".claude.json") }
     "claude-desktop" { Write-Config "Claude Desktop" (Join-Path $env:APPDATA "Claude\claude_desktop_config.json") }
     "vscode"         { Write-Config "VS Code" (Join-Path $env:APPDATA "Code\User\mcp.json") }
+    "kimi"           { Write-Config "Kimi CLI" (Join-Path $HOME ".kimi\mcp.json") }
+    "codex"          { Write-CodexConfig (Join-Path $HOME ".codex\config.toml") }
     default          { Warn "unknown client '$c' - skipped" }
   }
 }
@@ -114,7 +158,7 @@ Write-Host @"
 Next steps:
   1. Get a Figma Personal Access Token:
        Figma -> Settings -> Security -> Personal access tokens -> Generate new token
-  2. Restart your AI client (Cursor / Claude Code / Claude Desktop / VS Code).
+  2. Restart your AI client (Cursor / Claude Code / Claude Desktop / VS Code / Kimi CLI / Codex).
      The MCP server starts automatically via: $Cmd
   3. (Write tools) In Figma desktop:
        Plugins -> Development -> Import plugin from manifest...
