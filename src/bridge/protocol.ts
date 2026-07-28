@@ -49,6 +49,7 @@ export const PLUGIN_COMMANDS = [
   'create_text',
   'create_rectangle',
   'set_fills',
+  'set_effects',
   'set_auto_layout',
   'insert_image',
   'move_node',

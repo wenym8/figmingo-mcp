@@ -33,7 +33,17 @@ function findNode(id: string | undefined): BaseNode {
 
 function parentOf(params: any, vars: Map<string, string>): BaseNode & ChildrenMixin {
   let ref = params.parentId;
-  if (typeof ref === 'string' && ref.startsWith('$')) ref = vars.get(ref.slice(1));
+  if (typeof ref === 'string' && ref.startsWith('$')) {
+    const resolved = vars.get(ref.slice(1));
+    // Never silently fall back to the page for an unresolved $var — that writes
+    // nodes to the wrong parent. Batch vars live only within one envelope.
+    if (!resolved) {
+      throw new Error(
+        `unresolved batch variable "${ref}": variables captured with "as" only live within a single batch envelope; reference the node id directly or capture it in the same batch`,
+      );
+    }
+    ref = resolved;
+  }
   if (!ref) return figma.currentPage as unknown as BaseNode & ChildrenMixin;
   const node = findNode(ref);
   if (!('children' in node)) throw new Error(`node ${ref} cannot have children`);
@@ -89,6 +99,9 @@ const handlers: Record<string, (params: any, vars: Map<string, string>) => Promi
     frame.y = params.y ?? 0;
     frame.resize(Math.max(1, params.width ?? 100), Math.max(1, params.height ?? 100));
     if (params.clipsContent !== undefined) frame.clipsContent = !!params.clipsContent;
+    if (params.cornerRadius !== undefined) frame.cornerRadius = params.cornerRadius;
+    if (params.opacity !== undefined) frame.opacity = params.opacity;
+    if (params.effects) frame.effects = params.effects;
     if (params.fills) applyFills(frame, params.fills);
     if (params.autoLayout) await handlers.set_auto_layout({ nodeId: frame.id, ...params.autoLayout }, vars);
     return { nodeId: frame.id };
@@ -127,6 +140,8 @@ const handlers: Record<string, (params: any, vars: Map<string, string>) => Promi
     rect.y = params.y ?? 0;
     rect.resize(Math.max(1, params.width ?? 100), Math.max(1, params.height ?? 100));
     if (params.cornerRadius !== undefined) rect.cornerRadius = params.cornerRadius;
+    if (params.opacity !== undefined) rect.opacity = params.opacity;
+    if (params.effects) rect.effects = params.effects;
     if (params.fills) applyFills(rect, params.fills);
     return { nodeId: rect.id };
   },
@@ -135,6 +150,14 @@ const handlers: Record<string, (params: any, vars: Map<string, string>) => Promi
     const node = findNode(params.nodeId) as AnyNode;
     if (!('fills' in node)) throw new Error(`node ${params.nodeId} has no fills`);
     node.fills = params.fills ?? [];
+    return { nodeId: node.id };
+  },
+
+  async set_effects(params) {
+    const node = findNode(params.nodeId) as AnyNode;
+    if (!('effects' in node)) throw new Error(`node ${params.nodeId} has no effects`);
+    // Figma Effect[] e.g. [{type:'DROP_SHADOW', color:{r,g,b,a}, offset:{x,y}, radius, spread, visible:true, blendMode:'NORMAL'}]
+    node.effects = params.effects ?? [];
     return { nodeId: node.id };
   },
 
@@ -161,7 +184,12 @@ const handlers: Record<string, (params: any, vars: Map<string, string>) => Promi
       }
       if (params.primaryAxisAlignItems) node.primaryAxisAlignItems = params.primaryAxisAlignItems;
       if (params.counterAxisAlignItems) node.counterAxisAlignItems = params.counterAxisAlignItems;
+      // Sizing modes: SPACE_BETWEEN needs primaryAxisSizingMode FIXED (the
+      // default hug makes it a no-op); HUG/FILL for counter axis.
+      if (params.primaryAxisSizingMode) (node as any).primaryAxisSizingMode = params.primaryAxisSizingMode;
+      if (params.counterAxisSizingMode) (node as any).counterAxisSizingMode = params.counterAxisSizingMode;
       if (params.layoutWrap && 'layoutWrap' in node) (node as any).layoutWrap = params.layoutWrap;
+      if (params.layoutGrow !== undefined) (node as any).layoutGrow = params.layoutGrow;
     }
     return { nodeId: node.id };
   },
