@@ -31,6 +31,12 @@ export interface RenderOptions {
   waitForImages?: boolean;
   /** Extra settle time in ms after load (default 300). */
   settleMs?: number;
+  /**
+   * JS run in the page before any page scripts execute (Playwright
+   * addInitScript / evaluateOnNewDocument semantics) — e.g. seed localStorage
+   * or flip UI state so one HTML file can render multiple states.
+   */
+  initScript?: string;
   timeoutMs?: number;
   /** Element selector for a partial screenshot. */
   selector?: string;
@@ -122,6 +128,7 @@ async function launchBrowser() {
 async function openPage(browser: Awaited<ReturnType<typeof launchBrowser>>, opts: RenderOptions) {
   const page = await browser.newPage({ viewport: opts.viewport ?? { width: 1440, height: 900 } });
   const timeout = opts.timeoutMs ?? 60000;
+  if (opts.initScript) await page.addInitScript(opts.initScript);
   if (opts.html !== undefined) {
     await page.setContent(opts.html, { waitUntil: 'load', timeout });
   } else if (opts.htmlPath) {

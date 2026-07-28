@@ -150,7 +150,7 @@ Everything brand-specific is parameterized via options:
 | Tool | What it does |
 |---|---|
 | `bridge_status` | Plugin connected? queue size, client info, supported commands. |
-| `execute_plugin_command` | Generic envelope: `create_frame`, `create_text`, `create_rectangle`, `set_fills`, `set_auto_layout`, `insert_image`, `move_node`, `resize_node`, `delete_node`, `get_selection`, `export_node` — plus `commands: [...]` batches (sequential, `$var` node-id refs). Queued (bounded) while disconnected; 30 s timeout. |
+| `execute_plugin_command` | Generic envelope: `create_frame`, `create_text`, `create_rectangle`, `set_fills`, `set_auto_layout`, `insert_image`, `move_node`, `resize_node`, `delete_node`, `get_selection`, `export_node` — plus `commands: [...]` batches (sequential, `$var` node-id refs). Queued (bounded) while disconnected; heartbeat-based timeouts (see below). `create_frame`/`create_rectangle` accept `rotation` (degrees); `export_node` accepts `params.outPath` to save bytes to disk. |
 | `import_html_replica` | High-level: rebuild a replica spec as native Figma frames — main frame → section frames → text/image/svg/background nodes. `dryRun` previews the command plan. |
 
 The companion plugin (`plugin/`) connects to the MCP server at
@@ -167,6 +167,26 @@ small status panel (● connected / ○ connecting / ✕ failed + reason, server
 address, executed-command count) so you can tell at a glance the bridge is
 alive. In practice the plugin only talks to your local server; image bytes are
 pushed over the socket as base64.
+
+**Batch semantics (`commands: [...]`)**: the plugin executes commands
+sequentially and sends a `progress` heartbeat over the socket after **every**
+command (success or failure). On the server there is no fixed 30 s hard cap:
+
+- **Idle timeout** (`idleTimeoutMs`, default 20 000): max silence between
+  heartbeats/result. Every heartbeat resets it, so a healthy 50-command batch
+  never trips it no matter how long it runs.
+- **Total cap** (`timeoutMs`, default 300 000 = 5 min): the only hard limit,
+  and it's yours to set per call.
+- **Partial results**: a batch result always carries a per-command `results`
+  array (`{index, command, ok, result|error}`) plus `aborted`/`error` when
+  `stopOnError` (default true) cut it short — you see exactly what ran.
+- **Timeout errors are atomic-friendly**: if a call still times out, the error
+  message lists the command indexes **confirmed applied** via heartbeats
+  (e.g. `Confirmed completed command indexes: [0, 1, 2] (3/19)`), so you know
+  precisely what the canvas contains before retrying; the plugin may continue
+  in the background, so inspect the page (`get_page_children`) first.
+
+Single (non-batch) commands use the same idle/total model.
 
 ## Replica Playbook
 

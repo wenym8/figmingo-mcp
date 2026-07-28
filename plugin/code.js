@@ -84,6 +84,12 @@ function applyFills(node, fills) {
     if (Array.isArray(fills))
         node.fills = fills;
 }
+/** Params use degrees (CSS-like); the Plugin API stores radians. */
+function applyRotation(node, degrees) {
+    if (typeof degrees === 'number' && Number.isFinite(degrees)) {
+        node.rotation = (degrees * Math.PI) / 180;
+    }
+}
 // ---- command handlers ----
 const handlers = {
     async create_frame(params, vars) {
@@ -104,6 +110,7 @@ const handlers = {
             frame.effects = params.effects;
         if (params.fills)
             applyFills(frame, params.fills);
+        applyRotation(frame, params.rotation);
         if (params.autoLayout)
             await handlers.set_auto_layout({ nodeId: frame.id, ...params.autoLayout }, vars);
         return { nodeId: frame.id };
@@ -154,6 +161,7 @@ const handlers = {
             rect.effects = params.effects;
         if (params.fills)
             applyFills(rect, params.fills);
+        applyRotation(rect, params.rotation);
         return { nodeId: rect.id };
     },
     async set_fills(params) {
@@ -296,39 +304,59 @@ const handlers = {
         const bytes = await node.exportAsync(settings);
         return { nodeId: node.id, format, base64: figma.base64Encode(bytes) };
     },
-    async batch(params, vars) {
+    async batch(params, vars, ctx) {
         const results = [];
+        const commands = params.commands ?? [];
+        const total = commands.length;
         const stopOnError = params.stopOnError !== false;
-        for (const cmd of params.commands ?? []) {
-            const handler = handlers[cmd.command];
+        let aborted = false;
+        let abortError;
+        for (let i = 0; i < commands.length; i++) {
+            const cmd = commands[i];
+            const handler = cmd.command === 'batch' ? undefined : handlers[cmd.command];
             if (!handler) {
-                const err = { command: cmd.command, ok: false, error: `unknown command ${cmd.command}` };
-                results.push(err);
-                if (stopOnError)
-                    throw new Error(`batch aborted: unknown command ${cmd.command}`);
+                const error = cmd.command === 'batch' ? 'nested batch is not supported' : `unknown command ${cmd.command}`;
+                results.push({ index: i, command: cmd.command, ok: false, error });
+                ctx?.reportProgress?.({ index: i, total, command: String(cmd.command), ok: false });
+                if (stopOnError) {
+                    aborted = true;
+                    abortError = error;
+                    break;
+                }
                 continue;
             }
             try {
                 const substituted = substitute(cmd.params ?? {}, vars);
-                const result = await handler(substituted, vars);
+                const result = await handler(substituted, vars, ctx);
                 if (cmd.as && result?.nodeId)
                     vars.set(cmd.as, result.nodeId);
-                results.push({ command: cmd.command, ok: true, result });
+                results.push({ index: i, command: cmd.command, ok: true, result });
+                ctx?.reportProgress?.({ index: i, total, command: String(cmd.command), ok: true });
             }
             catch (err) {
-                results.push({ command: cmd.command, ok: false, error: err instanceof Error ? err.message : String(err) });
-                if (stopOnError)
-                    throw err;
+                const error = err instanceof Error ? err.message : String(err);
+                results.push({ index: i, command: cmd.command, ok: false, error });
+                // Heartbeat even for the failed command: the server learns exactly how
+                // far the batch got before aborting.
+                ctx?.reportProgress?.({ index: i, total, command: String(cmd.command), ok: false });
+                if (stopOnError) {
+                    aborted = true;
+                    abortError = error;
+                    break;
+                }
             }
         }
-        return { executed: results.length, results };
+        // Always return the per-command results array — even on abort the caller
+        // can see exactly which commands ran (and which one failed) instead of
+        // getting a bare exception with no canvas state.
+        return { executed: results.length, total, aborted, ...(abortError ? { error: abortError } : {}), results };
     },
 };
-async function dispatch(command, params) {
+async function dispatch(command, params, ctx) {
     const handler = handlers[command];
     if (!handler)
         throw new Error(`unknown command: ${command}`);
-    return handler(params, new Map());
+    return handler(params, new Map(), ctx);
 }
 // ---- UI bridge ----
 // The WebSocket lives in ui.html (sandboxed code.js cannot open sockets).
@@ -359,7 +387,10 @@ figma.ui.onmessage = async (msg) => {
     if (msg.type === 'command' && typeof msg.id === 'string' && typeof msg.command === 'string') {
         log('command', msg.command, msg.id);
         try {
-            const result = await dispatch(msg.command, msg.params ?? {});
+            const ctx = {
+                reportProgress: (info) => figma.ui.postMessage({ type: 'command-progress', id: msg.id, ...info }),
+            };
+            const result = await dispatch(msg.command, msg.params ?? {}, ctx);
             figma.ui.postMessage({ type: 'command-result', id: msg.id, ok: true, result: result ?? null });
         }
         catch (err) {

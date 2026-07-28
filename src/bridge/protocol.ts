@@ -35,12 +35,28 @@ export interface BridgeResult {
   error?: string;
 }
 
+/**
+ * Progress heartbeat. Batches send one per executed command so the server can
+ * (a) reset its idle timer and (b) report exactly which command indexes are
+ * confirmed applied on the canvas if the call later times out.
+ */
+export interface BridgeProgress {
+  type: 'progress';
+  id: string;
+  /** 0-based index of the command that just finished (batch only). */
+  index?: number;
+  total?: number;
+  command?: string;
+  /** Whether that command succeeded. */
+  ok?: boolean;
+}
+
 export interface BridgeError {
   type: 'error';
   message: string;
 }
 
-export type PluginToServer = BridgeHello | BridgeResult;
+export type PluginToServer = BridgeHello | BridgeResult | BridgeProgress;
 export type ServerToPlugin = BridgeWelcome | BridgeCommand | BridgeError;
 
 /** Commands supported by execute_plugin_command / the plugin. */
@@ -62,6 +78,17 @@ export const PLUGIN_COMMANDS = [
 ] as const;
 
 export type PluginCommandName = (typeof PLUGIN_COMMANDS)[number];
+
+/**
+ * Command parameter notes (the plugin accepts these loose JSON params):
+ * - create_frame / create_rectangle: x, y, width, height, name, fills, effects,
+ *   opacity, cornerRadius, parentId (or "$var" batch ref), plus `rotation`
+ *   (DEGREES, converted to radians for node.rotation). create_frame also takes
+ *   clipsContent and autoLayout.
+ * - export_node: nodeId, format (PNG|JPG|SVG|PDF), scale. Returns base64 by
+ *   default; pass an absolute `outPath` to have the SERVER write the bytes to
+ *   disk and return { path, bytes } instead of inline base64.
+ */
 
 /** Batch envelope: execute several commands sequentially inside the plugin. */
 export interface BatchParams {

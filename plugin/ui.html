@@ -144,6 +144,10 @@
     if (msg.type === 'init') {
       info = msg;
       connect();
+    } else if (msg.type === 'command-progress') {
+      // Batch heartbeat: relay to the server so it can reset its idle timer
+      // and track which command indexes are confirmed applied.
+      toServer({ type: 'progress', id: msg.id, index: msg.index, total: msg.total, command: msg.command, ok: msg.ok });
     } else if (msg.type === 'command-result') {
       commandCount += 1;
       countEl.textContent = String(commandCount);

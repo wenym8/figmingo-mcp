@@ -26,6 +26,10 @@ export const compareHtmlToImage: ToolDef = {
     hideFixed: z.boolean().optional().default(false).describe('Hide position:fixed/sticky elements before shooting.'),
     waitForImages: z.boolean().optional().default(true),
     settleMs: z.number().int().optional().default(300),
+    initScript: z
+      .string()
+      .optional()
+      .describe('JS run before page scripts (addInitScript) — passed through to the renderer, e.g. seed localStorage/state for multi-state replicas.'),
     imagePath: z.string().describe('Path to the reference image (PNG) to compare against.'),
     threshold: z
       .number()
@@ -88,6 +92,7 @@ export const compareHtmlToImage: ToolDef = {
       hideFixed: args.hideFixed,
       waitForImages: args.waitForImages,
       settleMs: args.settleMs,
+      initScript: args.initScript,
       outPath: renderPath,
     });
     const result = comparePngBuffers(fs.readFileSync(renderPath), fs.readFileSync(args.imagePath), {

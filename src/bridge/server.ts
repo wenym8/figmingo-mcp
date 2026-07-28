@@ -1,8 +1,15 @@
 /**
  * WebSocket server hosting the plugin bridge at ws://127.0.0.1:39220.
  * One companion plugin connection at a time; commands sent while
- * disconnected are queued (bounded) and flushed on reconnect, each with its
- * own 30s timeout measured from the moment it is actually sent.
+ * disconnected are queued (bounded) and flushed on reconnect.
+ *
+ * Timeout model (no fixed hard cap): each dispatched command gets
+ *   - an IDLE timer (default 20s, configurable) that is reset by every
+ *     `progress` heartbeat from the plugin — batches send one per executed
+ *     command, so a healthy long-running batch never trips it;
+ *   - a TOTAL cap (default 5 min, overridable per call via timeoutMs).
+ * A timeout error always lists the command indexes confirmed completed via
+ * progress heartbeats, so callers know exactly what the canvas contains.
  */
 
 import { EventEmitter } from 'node:events';
@@ -11,21 +18,72 @@ import {
   BRIDGE_PROTOCOL_VERSION,
   type BridgeHello,
   type BridgeCommand,
+  type BridgeProgress,
   type PluginToServer,
 } from './protocol';
+
+export interface ProgressEntry {
+  index?: number;
+  total?: number;
+  command?: string;
+  ok?: boolean;
+  at: number;
+}
 
 export interface PendingCommand {
   envelope: BridgeCommand;
   resolve: (result: unknown) => void;
   reject: (err: Error) => void;
-  timer?: NodeJS.Timeout;
+  idleTimer?: NodeJS.Timeout;
+  totalTimer?: NodeJS.Timeout;
+  idleTimeoutMs: number;
+  totalTimeoutMs: number;
+  /** Progress heartbeats received so far (batch: one per executed command). */
+  progress: ProgressEntry[];
+}
+
+/** Error thrown on idle/total timeout; carries confirmed progress. */
+export class BridgeTimeoutError extends Error {
+  readonly kind: 'idle' | 'total';
+  readonly command: string;
+  readonly progress: ProgressEntry[];
+  constructor(kind: 'idle' | 'total', p: PendingCommand, waitedMs: number) {
+    const completed = p.progress.map((e) => e.index).filter((i): i is number => typeof i === 'number');
+    const lastTotal = [...p.progress].reverse().find((e) => typeof e.total === 'number')?.total;
+    const completedNote = p.progress.length
+      ? ` Confirmed completed command indexes: [${completed.sort((a, b) => a - b).join(', ')}]` +
+        (lastTotal !== undefined ? ` (${completed.length}/${lastTotal}).` : '.')
+      : ' No progress was ever received (nothing is confirmed applied).';
+    const backgroundNote =
+      ' The plugin may still be executing in the background — the canvas can contain partially-applied commands;' +
+      ' inspect it (e.g. get_page_children) before retrying.';
+    super(
+      kind === 'idle'
+        ? `plugin command ${p.envelope.command} timed out: no progress or result for ${waitedMs}ms (idle timeout).${completedNote}${backgroundNote}`
+        : `plugin command ${p.envelope.command} timed out after ${waitedMs}ms (total cap).${completedNote}${backgroundNote}`,
+    );
+    this.name = 'BridgeTimeoutError';
+    this.kind = kind;
+    this.command = p.envelope.command;
+    this.progress = p.progress;
+  }
+  get completedIndexes(): number[] {
+    return this.progress.map((e) => e.index).filter((i): i is number => typeof i === 'number').sort((a, b) => a - b);
+  }
 }
 
 export interface BridgeOptions {
   host?: string;
   port?: number;
-  /** Per-command timeout once sent (default 30s). */
+  /**
+   * Deprecated alias for maxWaitMs (kept for backward compatibility).
+   * Previously a fixed 30s per-command hard timeout.
+   */
   commandTimeoutMs?: number;
+  /** Idle timeout: max silence between progress heartbeats/result (default 20s). */
+  idleTimeoutMs?: number;
+  /** Total cap per command once sent (default 5 min). */
+  maxWaitMs?: number;
   /** Max queued commands while disconnected (default 100). */
   queueLimit?: number;
   serverVersion?: string;
@@ -46,7 +104,14 @@ export class PluginBridge extends EventEmitter {
   private pending = new Map<string, PendingCommand>();
   private queue: PendingCommand[] = [];
   private seq = 0;
-  private opts: Required<BridgeOptions>;
+  private opts: {
+    host: string;
+    port: number;
+    idleTimeoutMs: number;
+    maxWaitMs: number;
+    queueLimit: number;
+    serverVersion: string;
+  };
   private started = false;
 
   constructor(opts: BridgeOptions) {
@@ -54,7 +119,9 @@ export class PluginBridge extends EventEmitter {
     this.opts = {
       host: opts.host ?? '127.0.0.1',
       port: opts.port ?? 39220,
-      commandTimeoutMs: opts.commandTimeoutMs ?? 30_000,
+      idleTimeoutMs: opts.idleTimeoutMs ?? 20_000,
+      // commandTimeoutMs is a deprecated alias for the total cap.
+      maxWaitMs: opts.maxWaitMs ?? opts.commandTimeoutMs ?? 300_000,
       queueLimit: opts.queueLimit ?? 100,
       serverVersion: opts.serverVersion ?? '0.1.0',
     };
@@ -147,14 +214,42 @@ export class PluginBridge extends EventEmitter {
       this.flushQueue();
       return;
     }
+    if (msg.type === 'progress') {
+      this.onProgress(msg as BridgeProgress);
+      return;
+    }
     if (msg.type === 'result') {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
-      if (p.timer) clearTimeout(p.timer);
+      this.clearTimers(p);
       if (msg.ok) p.resolve(msg.result);
       else p.reject(new Error(msg.error || `plugin command ${p.envelope.command} failed`));
     }
+  }
+
+  private onProgress(msg: BridgeProgress) {
+    const p = this.pending.get(msg.id);
+    if (!p) return;
+    p.progress.push({ index: msg.index, total: msg.total, command: msg.command, ok: msg.ok, at: Date.now() });
+    // Heartbeat: the plugin is alive and working — reset the idle timer.
+    this.armIdleTimer(p);
+  }
+
+  private clearTimers(p: PendingCommand) {
+    if (p.idleTimer) clearTimeout(p.idleTimer);
+    if (p.totalTimer) clearTimeout(p.totalTimer);
+    p.idleTimer = undefined;
+    p.totalTimer = undefined;
+  }
+
+  private armIdleTimer(p: PendingCommand) {
+    if (p.idleTimer) clearTimeout(p.idleTimer);
+    p.idleTimer = setTimeout(() => {
+      this.pending.delete(p.envelope.id);
+      this.clearTimers(p);
+      p.reject(new BridgeTimeoutError('idle', p, p.idleTimeoutMs));
+    }, p.idleTimeoutMs);
   }
 
   private send(ws: WebSocket, msg: unknown) {
@@ -166,7 +261,7 @@ export class PluginBridge extends EventEmitter {
   }
 
   private fail(p: PendingCommand, err: Error) {
-    if (p.timer) clearTimeout(p.timer);
+    this.clearTimers(p);
     p.reject(err);
   }
 
@@ -182,10 +277,12 @@ export class PluginBridge extends EventEmitter {
       this.enqueue(p);
       return;
     }
-    p.timer = setTimeout(() => {
+    p.totalTimer = setTimeout(() => {
       this.pending.delete(p.envelope.id);
-      p.reject(new Error(`plugin command ${p.envelope.command} timed out after ${this.opts.commandTimeoutMs}ms`));
-    }, this.opts.commandTimeoutMs);
+      this.clearTimers(p);
+      p.reject(new BridgeTimeoutError('total', p, p.totalTimeoutMs));
+    }, p.totalTimeoutMs);
+    this.armIdleTimer(p);
     this.pending.set(p.envelope.id, p);
     this.send(ws, p.envelope);
   }
@@ -216,10 +313,16 @@ export class PluginBridge extends EventEmitter {
 
   /**
    * Send a command to the plugin. While disconnected the command is queued
-   * (bounded) and sent on reconnect; the 30s timeout starts when sent.
+   * (bounded) and sent on reconnect; the idle/total timers start when sent.
    * Set opts.failIfDisconnected to reject immediately instead.
+   * opts.timeoutMs overrides the total cap (default 5 min); opts.idleTimeoutMs
+   * overrides the idle timeout (default 20s, reset by progress heartbeats).
    */
-  execute<T = unknown>(command: string, params?: unknown, opts: { timeoutMs?: number; failIfDisconnected?: boolean } = {}): Promise<T> {
+  execute<T = unknown>(
+    command: string,
+    params?: unknown,
+    opts: { timeoutMs?: number; idleTimeoutMs?: number; failIfDisconnected?: boolean } = {},
+  ): Promise<T> {
     const id = `cmd-${Date.now()}-${++this.seq}`;
     const envelope: BridgeCommand = { type: 'command', id, command, params };
     return new Promise<T>((resolve, reject) => {
@@ -227,6 +330,9 @@ export class PluginBridge extends EventEmitter {
         envelope,
         resolve: resolve as (r: unknown) => void,
         reject,
+        idleTimeoutMs: opts.idleTimeoutMs ?? this.opts.idleTimeoutMs,
+        totalTimeoutMs: opts.timeoutMs ?? this.opts.maxWaitMs,
+        progress: [],
       };
       if (!this.started) {
         reject(new Error('plugin bridge is not running on this server (started with --no-bridge or the port was busy)'));
@@ -240,15 +346,7 @@ export class PluginBridge extends EventEmitter {
         }
         return;
       }
-      const timeoutMs = opts.timeoutMs;
-      if (timeoutMs && timeoutMs !== this.opts.commandTimeoutMs) {
-        const prev = this.opts.commandTimeoutMs;
-        this.opts.commandTimeoutMs = timeoutMs;
-        this.dispatch(p);
-        this.opts.commandTimeoutMs = prev;
-      } else {
-        this.dispatch(p);
-      }
+      this.dispatch(p);
     });
   }
 }

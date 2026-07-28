@@ -20,6 +20,10 @@ export const renderHtmlScreenshot: ToolDef = {
     hideFixed: z.boolean().optional().default(false).describe('Hide position:fixed/sticky elements before shooting.'),
     waitForImages: z.boolean().optional().default(true),
     settleMs: z.number().int().optional().default(300),
+    initScript: z
+      .string()
+      .optional()
+      .describe('JS run before page scripts (addInitScript) — e.g. seed localStorage/state so one HTML file can render multiple states.'),
     outPath: z.string().describe('Where to save the PNG.'),
     inline: z.boolean().optional().default(false).describe('Also return the PNG inline as base64.'),
   },
@@ -34,6 +38,7 @@ export const renderHtmlScreenshot: ToolDef = {
       hideFixed: args.hideFixed,
       waitForImages: args.waitForImages,
       settleMs: args.settleMs,
+      initScript: args.initScript,
       outPath: args.outPath,
     });
     const stat = fs.statSync(result.path);

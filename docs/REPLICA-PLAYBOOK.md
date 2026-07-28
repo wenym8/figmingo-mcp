@@ -167,3 +167,27 @@ judge 建议、尚未实现的工具增强（按价值排序）：
 | 返修轮数 | 7（前 3 轮目测调参浪费） | 6（末轮负收益） |
 | 关键教训 | 测量脚本该第一轮就建；r4 重构回归；r6 双变量无法归因 | 字宽差先量字号再调字重；第 6 轮应触发收敛判据停手 |
 | 若按本 Playbook | 预计 3–4 轮收敛 | 预计 4–5 轮收敛 |
+
+---
+
+## F. Figma↔Chromium 字重映射
+
+实测结论（C4）：**Figma `PingFang SC Medium` ≈ Chromium `font-weight: 600`，不是 500**。
+直接按 CSS 惯例把 Medium 映射成 500 会整体偏细，文字带 diff 迟迟收不下去；改成 600 后字宽/字重同时对齐。
+
+实用映射表（PingFang SC / 常见中文字体 → Chromium font-weight）：
+
+| Figma 字重名 | Chromium font-weight |
+|---|---|
+| PingFang SC Light | 300 |
+| PingFang SC Regular | 400 |
+| PingFang SC Medium | **600**（非 500） |
+| PingFang SC Semibold | 700（若 600 已被 Medium 占用，标题类可上 700，以字宽实测为准） |
+| Inter Medium / Bold | 500 / 700（西文字体按惯例映射即可） |
+
+判读方法不变：先量字宽差（A1），字宽对不上先调字号，字号对了再调字重档位。
+
+### C4 收敛经验（两条可直接当判据用）
+
+1. **非文字带 diff 可归零**：纯色块、描边、阴影这类非文字元素，只要几何和颜色量对了，diffRatio 能收到 0——非文字带还有残余 diff 时，不要归因于"渲染差异"，回去量几何/取色。
+2. **< 0.6% 且纯 AA 描边即收敛**：总 diffRatio 低于 0.6%、且 diff 图上残余只是环状细边（antiAliasPixels 解释了绝大部分）时，判定收敛、停手交付——继续调参是负收益。

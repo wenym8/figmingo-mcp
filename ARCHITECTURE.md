@@ -117,8 +117,11 @@ AI client (Cursor / Claude Code / …)
 
 - MCP server hosts `ws://127.0.0.1:39220` (configurable). Companion plugin
   (`plugin/`) connects on open, registers with a session token, executes command
-  envelopes, returns results/errors. 30 s per-command timeout, queue while
-  disconnected.
+  envelopes, returns results/errors. Queue while disconnected. Timeouts are
+  heartbeat-based: batches send a `progress` message per executed command;
+  the server fails a call only after `idleTimeoutMs` (default 20 s) of silence
+  or the `timeoutMs` total cap (default 5 min), and timeout errors list the
+  command indexes confirmed applied via heartbeats.
 - Plugin = `manifest.json` + `code.js` + `ui.html`. **The WebSocket lives in
   the UI iframe**: the `code.js` sandbox cannot open sockets (`new WebSocket()`
   fails silently), so `ui.html` owns the connection (backoff reconnect 1 s →
