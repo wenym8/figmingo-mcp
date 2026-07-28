@@ -19,7 +19,13 @@ export const executePluginCommand: ToolDef = {
     command: commandEnum.optional().describe('Single command name.'),
     params: z.record(z.any()).optional().describe('Parameters for the single command.'),
     commands: z
-      .array(z.object({ command: commandEnum, params: z.record(z.any()).optional() }))
+      .array(
+        z.object({
+          command: commandEnum,
+          params: z.record(z.any()).optional(),
+          as: z.string().optional().describe('Capture result.nodeId into a batch variable; later commands can reference it as "$name" (e.g. parentId: "$frame").'),
+        }),
+      )
       .optional()
       .describe('Batch of commands; executed sequentially inside the plugin.'),
     stopOnError: z.boolean().optional().default(true).describe('Batch: stop on first error.'),

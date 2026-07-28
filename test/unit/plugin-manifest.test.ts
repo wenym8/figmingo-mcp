@@ -74,3 +74,33 @@ describe('plugin architecture: WebSocket lives in the UI iframe', () => {
     expect(ui).toContain('connecting');
   });
 });
+
+describe('plugin substitute() behavior (regression: object branch must return)', () => {
+  // Extract substitute from the COMPILED plugin/code.js (plain JS, shippable artifact).
+  const src = fs.readFileSync(path.join(__dirname, '../../plugin/code.js'), 'utf8');
+  const m = src.match(/function substitute\(value, vars\) \{[\s\S]*?\n\}/);
+  if (!m) throw new Error('substitute() not found in plugin/code.js');
+  const fn = new Function(`${m[0]}; return substitute;`)() as (
+    v: unknown,
+    vars: Map<string, string>,
+  ) => unknown;
+
+  it('resolves $vars inside params objects', () => {
+    const vars = new Map([['card', '3:14']]);
+    expect(fn({ nodeId: '$card', width: 80 }, vars)).toEqual({ nodeId: '3:14', width: 80 });
+  });
+
+  it('resolves nested $vars and leaves unknown refs untouched', () => {
+    const vars = new Map([['f', '1:2']]);
+    expect(fn({ parentId: '$f', fills: [{ type: 'SOLID' }], ref: '$nope' }, vars)).toEqual({
+      parentId: '1:2',
+      fills: [{ type: 'SOLID' }],
+      ref: '$nope',
+    });
+  });
+
+  it('passes through primitives', () => {
+    expect(fn(42, new Map())).toBe(42);
+    expect(fn('plain', new Map())).toBe('plain');
+  });
+});

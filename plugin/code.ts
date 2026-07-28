@@ -46,6 +46,7 @@ function substitute(value: any, vars: Map<string, string>): any {
   if (value && typeof value === 'object') {
     const out: Record<string, any> = {};
     for (const [k, v] of Object.entries(value)) out[k] = substitute(v, vars);
+    return out;
   }
   return value;
 }

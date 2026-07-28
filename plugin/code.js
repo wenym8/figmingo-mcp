@@ -46,6 +46,7 @@ function substitute(value, vars) {
         const out = {};
         for (const [k, v] of Object.entries(value))
             out[k] = substitute(v, vars);
+        return out;
     }
     return value;
 }
