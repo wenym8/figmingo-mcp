@@ -58,8 +58,9 @@ AI client (Cursor / Claude Code / …)
                         │ ws://127.0.0.1:39220
                         ▼
               figmingo companion plugin
-              (runs inside Figma desktop,
-               full Plugin API: create/edit)
+              (ui.html holds the ws + status panel;
+               code.js sandbox executes Plugin API
+               commands via postMessage)
 ```
 
 ## Tool list (v1 acceptance scope)
@@ -117,9 +118,15 @@ AI client (Cursor / Claude Code / …)
   (`plugin/`) connects on open, registers with a session token, executes command
   envelopes, returns results/errors. 30 s per-command timeout, queue while
   disconnected.
-- Plugin is a single `manifest.json` + `code.js` (no network access beyond
-  localhost ws, per Figma plugin CSP: needs `"networkAccess": {"allowedDomains":
-  ["ws://127.0.0.1:39220"]}`).
+- Plugin = `manifest.json` + `code.js` + `ui.html`. **The WebSocket lives in
+  the UI iframe**: the `code.js` sandbox cannot open sockets (`new WebSocket()`
+  fails silently), so `ui.html` owns the connection (backoff reconnect 1 s →
+  15 s, hello handshake, status panel) and relays command envelopes to the
+  sandbox via `postMessage` (`pluginMessage` / `figma.ui.onmessage`). Proven
+  architecture (same as figwright).
+- CSP: Figma rejects `ws://` URLs in `allowedDomains`, so the manifest uses
+  `"networkAccess": {"allowedDomains": ["*"]}`; in practice the plugin only
+  talks to the local server, and image bytes are pushed over the socket.
 
 ## Acceptance (验收) plan
 
@@ -158,7 +165,8 @@ figmingo-mcp/
 │       └── protocol.ts     # command envelope types
 ├── plugin/
 │   ├── manifest.json
-│   ├── code.ts → code.js   # companion plugin
+│   ├── code.ts → code.js   # companion plugin (sandbox half: Plugin API handlers)
+│   ├── ui.html             # UI iframe: owns the WebSocket + status panel (static)
 │   └── README.md           # how to import into Figma desktop
 ├── scripts/
 │   ├── install.sh

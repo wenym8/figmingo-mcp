@@ -1,87 +1,22 @@
 "use strict";
 /**
- * figmingo companion plugin.
+ * figmingo companion plugin (sandbox half).
  *
- * Runs inside Figma desktop, connects to the local figmingo-mcp server at
- * ws://127.0.0.1:39220, executes command envelopes, and returns results.
- * - Registers with a session token (`hello`) on open.
- * - Reconnects with backoff on disconnect.
- * - Per-command errors are returned as { ok:false, error } — the server-side
- *   30s timeout handles hangs.
- * - Batch commands support `as` variable capture and "$var" parentId refs.
+ * Architecture (fixed): code.js runs in Figma's restricted sandbox where
+ * `new WebSocket()` is unavailable. The WebSocket connection to the local
+ * figmingo-mcp server (ws://127.0.0.1:39220) therefore lives in the UI
+ * iframe (ui.html). This file:
+ *   - shows the UI (small connection-status panel),
+ *   - answers the UI's init request (fileName / editorType / sessionId),
+ *   - receives command envelopes from the UI via figma.ui.onmessage,
+ *   - executes them against the Plugin API (handlers below, unchanged),
+ *   - posts results back to the UI, which relays them over the socket.
  */
-const WS_URL = 'ws://127.0.0.1:39220';
 const PROTOCOL = 1;
 const PLUGIN_VERSION = '0.1.0';
-let ws = null;
-let reconnectDelay = 1000;
-let sessionId = `sess-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+const sessionId = `sess-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 function log(...args) {
     console.log('[figmingo]', ...args);
-}
-function connect() {
-    try {
-        ws = new WebSocket(WS_URL);
-    }
-    catch (err) {
-        scheduleReconnect();
-        return;
-    }
-    ws.onopen = () => {
-        reconnectDelay = 1000;
-        send({
-            type: 'hello',
-            protocol: PROTOCOL,
-            sessionId,
-            pluginVersion: PLUGIN_VERSION,
-            fileName: figma.root.name,
-            editorType: figma.editorType,
-        });
-        log('connected to', WS_URL);
-        figma.notify?.('figmingo: connected to local MCP server');
-    };
-    ws.onmessage = (ev) => {
-        void handleMessage(String(ev.data));
-    };
-    ws.onclose = () => {
-        log('disconnected; retrying soon');
-        scheduleReconnect();
-    };
-    ws.onerror = () => {
-        try {
-            ws?.close();
-        }
-        catch {
-            /* ignore */
-        }
-    };
-}
-function scheduleReconnect() {
-    setTimeout(connect, reconnectDelay);
-    reconnectDelay = Math.min(reconnectDelay * 2, 15000);
-}
-function send(msg) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(msg));
-    }
-}
-async function handleMessage(raw) {
-    let env;
-    try {
-        env = JSON.parse(raw);
-    }
-    catch {
-        return;
-    }
-    if (env.type !== 'command' || !env.id || !env.command)
-        return;
-    try {
-        const result = await dispatch(env.command, env.params ?? {});
-        send({ type: 'result', id: env.id, ok: true, result: result ?? null });
-    }
-    catch (err) {
-        send({ type: 'result', id: env.id, ok: false, error: err instanceof Error ? err.message : String(err) });
-    }
 }
 function findNode(id) {
     if (!id)
@@ -111,7 +46,6 @@ function substitute(value, vars) {
         const out = {};
         for (const [k, v] of Object.entries(value))
             out[k] = substitute(v, vars);
-        return out;
     }
     return value;
 }
@@ -335,8 +269,45 @@ async function dispatch(command, params) {
         throw new Error(`unknown command: ${command}`);
     return handler(params, new Map());
 }
-figma.on('run', () => {
-    log('plugin started, connecting…');
-    connect();
-    // Keep the plugin alive; it closes when the user closes it from the menu.
-});
+// ---- UI bridge ----
+// The WebSocket lives in ui.html (sandboxed code.js cannot open sockets).
+// UI → code.js: ui-ready / bridge-state / command
+// code.js → UI: init / command-result
+figma.showUI(__html__, { width: 280, height: 120, title: 'figmingo' });
+figma.ui.onmessage = async (msg) => {
+    if (!msg || typeof msg !== 'object')
+        return;
+    if (msg.type === 'ui-ready') {
+        figma.ui.postMessage({
+            type: 'init',
+            protocol: PROTOCOL,
+            sessionId,
+            pluginVersion: PLUGIN_VERSION,
+            fileName: figma.root.name,
+            editorType: figma.editorType,
+        });
+        return;
+    }
+    if (msg.type === 'bridge-state') {
+        if (msg.state === 'connected')
+            figma.notify('figmingo: connected to local MCP server');
+        if (msg.state === 'failed')
+            figma.notify(`figmingo: bridge connection failed (${msg.error ?? 'unknown'})`, { error: true });
+        return;
+    }
+    if (msg.type === 'command' && typeof msg.id === 'string' && typeof msg.command === 'string') {
+        log('command', msg.command, msg.id);
+        try {
+            const result = await dispatch(msg.command, msg.params ?? {});
+            figma.ui.postMessage({ type: 'command-result', id: msg.id, ok: true, result: result ?? null });
+        }
+        catch (err) {
+            figma.ui.postMessage({
+                type: 'command-result',
+                id: msg.id,
+                ok: false,
+                error: err instanceof Error ? err.message : String(err),
+            });
+        }
+    }
+};

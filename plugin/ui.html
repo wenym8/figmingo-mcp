@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>figmingo</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    background: #1e1e1e;
+    color: #e8e8e8;
+  }
+  .panel { padding: 10px 12px 8px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; min-height: 16px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .dot.connected { background: #18a058; box-shadow: 0 0 6px #18a05888; }
+  .dot.connecting { background: #f0a020; animation: pulse 1.1s ease-in-out infinite; }
+  .dot.failed { background: #d03050; }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+  .state { font-weight: 600; }
+  .brand { margin-left: auto; color: #7b61ff; font-weight: 700; font-size: 11px; }
+  .muted { color: #9aa0a6; font-size: 11px; }
+  .addr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #c8c8c8; }
+  .err {
+    color: #ff8a9b; font-size: 11px; max-width: 256px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <div class="panel">
+    <div class="row">
+      <span id="dot" class="dot connecting"></span>
+      <span id="state" class="state">connecting…</span>
+      <span class="brand">figmingo</span>
+    </div>
+    <div class="row">
+      <span class="muted">server</span>
+      <span id="addr" class="addr">ws://127.0.0.1:39220</span>
+    </div>
+    <div class="row">
+      <span class="muted">commands executed</span>
+      <span id="count">0</span>
+      <span id="err" class="err hidden"></span>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+  var WS_URL = 'ws://127.0.0.1:39220';
+  var MAX_RETRY_MS = 15000;
+
+  var dot = document.getElementById('dot');
+  var stateEl = document.getElementById('state');
+  var errEl = document.getElementById('err');
+  var countEl = document.getElementById('count');
+
+  var ws = null;
+  var retryDelay = 1000;
+  var info = null;        // init payload from code.js (protocol/sessionId/fileName/…)
+  var commandCount = 0;
+  var everConnected = false;
+
+  function setState(s, errText) {
+    dot.className = 'dot ' + (s === 'connected' ? 'connected' : s === 'failed' ? 'failed' : 'connecting');
+    stateEl.textContent = s === 'connected' ? 'connected' : s === 'failed' ? 'connection failed' : 'connecting…';
+    if (errText) {
+      errEl.textContent = errText;
+      errEl.title = errText;
+      errEl.classList.remove('hidden');
+    } else {
+      errEl.classList.add('hidden');
+    }
+  }
+
+  function toCode(msg) {
+    parent.postMessage({ pluginMessage: msg }, '*');
+  }
+
+  function toServer(msg) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  }
+
+  function connect() {
+    if (!info) return; // wait for init payload from code.js first
+    setState(everConnected ? 'connecting' : 'connecting');
+    try {
+      ws = new WebSocket(WS_URL);
+    } catch (err) {
+      setState('failed', String((err && err.message) || err));
+      scheduleReconnect();
+      return;
+    }
+    ws.onopen = function () {
+      retryDelay = 1000;
+      everConnected = true;
+      setState('connected');
+      toServer({
+        type: 'hello',
+        protocol: info.protocol,
+        sessionId: info.sessionId,
+        pluginVersion: info.pluginVersion,
+        fileName: info.fileName,
+        editorType: info.editorType,
+      });
+      toCode({ type: 'bridge-state', state: 'connected' });
+    };
+    ws.onmessage = function (ev) {
+      var env;
+      try { env = JSON.parse(String(ev.data)); } catch (e) { return; }
+      if (!env || typeof env !== 'object') return;
+      if (env.type === 'command') {
+        // Forward the command envelope into the sandbox; the result comes back
+        // as 'command-result' and is relayed below.
+        toCode({ type: 'command', id: env.id, command: env.command, params: env.params });
+      } else if (env.type === 'welcome') {
+        // Server acknowledged the hello; nothing else to do.
+      } else if (env.type === 'error') {
+        setState('failed', env.message || 'server error');
+      }
+    };
+    ws.onclose = function () {
+      setState('connecting', everConnected ? 'disconnected — retrying' : 'is figmingo-mcp running? retrying…');
+      toCode({ type: 'bridge-state', state: 'disconnected' });
+      scheduleReconnect();
+    };
+    ws.onerror = function () {
+      try { ws.close(); } catch (e) { /* ignore */ }
+    };
+  }
+
+  function scheduleReconnect() {
+    setTimeout(connect, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
+  }
+
+  window.onmessage = function (ev) {
+    var msg = ev.data && ev.data.pluginMessage;
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'init') {
+      info = msg;
+      connect();
+    } else if (msg.type === 'command-result') {
+      commandCount += 1;
+      countEl.textContent = String(commandCount);
+      toServer({ type: 'result', id: msg.id, ok: !!msg.ok, result: msg.result, error: msg.error });
+    }
+  };
+
+  // Kick off: ask the sandbox for fileName/editorType/sessionId, then connect.
+  toCode({ type: 'ui-ready' });
+})();
+</script>
+</body>
+</html>

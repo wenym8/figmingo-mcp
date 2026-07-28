@@ -19,6 +19,7 @@
     "dist",
     "plugin/manifest.json",
     "plugin/code.js",
+    "plugin/ui.html",
     "plugin/README.md",
     "scripts",
     "README.md",

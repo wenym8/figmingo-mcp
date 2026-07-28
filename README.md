@@ -149,9 +149,17 @@ Everything brand-specific is parameterized via options:
 The companion plugin (`plugin/`) connects to the MCP server at
 `ws://127.0.0.1:39220`. Import once: **Figma desktop → Plugins → Development →
 Import plugin from manifest…** → select `~/.figmingo/plugin/manifest.json`
-(or `plugin/manifest.json` in this repo), then keep it running. Its network
-access is limited to localhost; image bytes are pushed over the socket. Works
-on free plans — writes never touch the REST quota.
+(or `plugin/manifest.json` in this repo), then keep it running. Works on free
+plans — writes never touch the REST quota.
+
+Architecture note: Figma's plugin sandbox (`code.js`) cannot open WebSockets,
+so the socket lives in the plugin's **UI iframe** (`ui.html`) and command
+envelopes are relayed between the iframe and the sandbox via `postMessage`
+(same architecture as proven local plugins like figwright). The UI shows a
+small status panel (● connected / ○ connecting / ✕ failed + reason, server
+address, executed-command count) so you can tell at a glance the bridge is
+alive. In practice the plugin only talks to your local server; image bytes are
+pushed over the socket as base64.
 
 ## Free-plan availability
 
@@ -219,7 +227,8 @@ acceptance plan.
    - HTML 1:1 复刻：`get_html_replica_spec` 生成 spec → 手写/生成 HTML →
      `verify_html_parity` 跑三关验收（文案/字体/颜色 ±容差、结构 ±4px、像素 diff ≤ 1%），
      产出 `report.json` 和 diff 图。
-   - 写回画布：Figma 桌面端 **插件 → 开发 → 导入 plugin/manifest.json** 并保持运行，
+   - 写回画布：Figma 桌面端 **插件 → 开发 → 导入 plugin/manifest.json** 并保持运行
+     （code.js 沙箱无法开 WebSocket，连接由插件 UI iframe 持有，面板会显示 ●已连接/○连接中/✕失败），
      然后 `import_html_replica`（先 `dryRun` 预览）或 `execute_plugin_command`。
 
 5. **免费套餐**：全部读工具 + 写工具均可用；variables 接口是 Enterprise 限定，
