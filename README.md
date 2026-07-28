@@ -168,6 +168,15 @@ address, executed-command count) so you can tell at a glance the bridge is
 alive. In practice the plugin only talks to your local server; image bytes are
 pushed over the socket as base64.
 
+## Replica Playbook
+
+Doing an HTML replica of a Figma design (or any reference screenshot)? Read
+[docs/REPLICA-PLAYBOOK.md](docs/REPLICA-PLAYBOOK.md) first — the 6-step battle
+flow distilled from two scored replica rounds (measure-before-CSS, font lock-in,
+bandEdges-driven iteration, single-variable changes, convergence criteria), diff
+image reading, tool cheat sheet, and the copy-proofing checklist. It exists so
+your next replica converges in 3–4 rounds instead of 7.
+
 ## Free-plan availability
 
 | Surface | Free plan |
