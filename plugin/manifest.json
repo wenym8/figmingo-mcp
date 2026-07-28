@@ -6,7 +6,7 @@
   "editorType": ["figma"],
   "documentAccess": "dynamic-page",
   "networkAccess": {
-    "allowedDomains": ["ws://127.0.0.1:39220"],
-    "reasoning": "figmingo is local-first: the plugin talks only to the figmingo-mcp server running on your own machine (ws://127.0.0.1:39220). Image bytes are pushed from the local server; no external network access is needed."
+    "allowedDomains": ["*"],
+    "reasoning": "Figma does not accept ws:// URLs in allowedDomains, so a wildcard is required for the local WebSocket relay. In practice the plugin only talks to the figmingo-mcp server on your own machine (ws://127.0.0.1:39220); image bytes are pushed from that local server."
   }
 }

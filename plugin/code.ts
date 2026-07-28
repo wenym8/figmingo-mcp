@@ -262,7 +262,10 @@ const handlers: Record<string, (params: any, vars: Map<string, string>) => Promi
   async resize_node(params) {
     const node = findNode(params.nodeId) as LayoutMixin;
     if (!('resize' in node)) throw new Error(`node ${params.nodeId} cannot be resized`);
-    (node as any).resize(Math.max(1, params.width ?? 100), Math.max(1, params.height ?? 100));
+    // Missing dimension keeps the node's current size instead of forcing 100.
+    const w = params.width ?? (node as any).width ?? 100;
+    const h = params.height ?? (node as any).height ?? 100;
+    (node as any).resize(Math.max(1, w), Math.max(1, h));
     return { nodeId: (node as any).id };
   },
 
@@ -282,12 +285,14 @@ const handlers: Record<string, (params: any, vars: Map<string, string>) => Promi
 
   async export_node(params) {
     const node = findNode(params.nodeId) as SceneNode;
-    const settings: ExportSettings = {
-      format: (params.format ?? 'PNG') as ExportSettings['format'],
-      constraint: { type: 'SCALE', value: params.scale ?? 1 },
-    };
+    const format = (params.format ?? 'PNG') as ExportSettings['format'];
+    // SCALE constraint is only valid for raster formats; SVG/PDF reject it.
+    const settings: ExportSettings =
+      format === 'SVG' || format === 'PDF'
+        ? ({ format } as ExportSettings)
+        : ({ format, constraint: { type: 'SCALE', value: params.scale ?? 1 } } as ExportSettings);
     const bytes = await (node as any).exportAsync(settings);
-    return { nodeId: node.id, format: settings.format, base64: figma.base64Encode(bytes) };
+    return { nodeId: node.id, format, base64: figma.base64Encode(bytes) };
   },
 
   async batch(params, vars) {

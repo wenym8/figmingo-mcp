@@ -273,7 +273,10 @@ const handlers = {
         const node = findNode(params.nodeId);
         if (!('resize' in node))
             throw new Error(`node ${params.nodeId} cannot be resized`);
-        node.resize(Math.max(1, params.width ?? 100), Math.max(1, params.height ?? 100));
+        // Missing dimension keeps the node's current size instead of forcing 100.
+        const w = params.width ?? node.width ?? 100;
+        const h = params.height ?? node.height ?? 100;
+        node.resize(Math.max(1, w), Math.max(1, h));
         return { nodeId: node.id };
     },
     async delete_node(params) {
@@ -290,12 +293,13 @@ const handlers = {
     },
     async export_node(params) {
         const node = findNode(params.nodeId);
-        const settings = {
-            format: (params.format ?? 'PNG'),
-            constraint: { type: 'SCALE', value: params.scale ?? 1 },
-        };
+        const format = (params.format ?? 'PNG');
+        // SCALE constraint is only valid for raster formats; SVG/PDF reject it.
+        const settings = format === 'SVG' || format === 'PDF'
+            ? { format }
+            : { format, constraint: { type: 'SCALE', value: params.scale ?? 1 } };
         const bytes = await node.exportAsync(settings);
-        return { nodeId: node.id, format: settings.format, base64: figma.base64Encode(bytes) };
+        return { nodeId: node.id, format, base64: figma.base64Encode(bytes) };
     },
     async batch(params, vars) {
         const results = [];
