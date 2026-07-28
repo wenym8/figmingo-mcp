@@ -459,8 +459,14 @@ export interface ComparePngOptions {
   maxRatio?: number;
   /** Write the diff PNG here. */
   outPath?: string;
-  /** Number of horizontal bands for diff localization; 0/undefined = off. */
+  /** Number of equal-height horizontal bands for diff localization; 0/undefined = off. Ignored when bandEdges is set. */
   bands?: number;
+  /**
+   * Custom band boundaries, e.g. [0, 120, 280, 974] → 3 bands covering [0,120), [120,280), [280,974).
+   * Values are clamped into [0, height], sorted, deduped; the first/last need not be 0/height
+   * (uncovered top/bottom rows are simply not assigned to any band). Takes precedence over `bands`.
+   */
+  bandEdges?: number[];
 }
 
 export interface ComparePngResult {
@@ -519,24 +525,36 @@ export function comparePngBuffers(renderBuf: Buffer, referenceBuf: Buffer, opts:
   const ratio = diffPixels / totalPixels;
 
   let bands: CompareBand[] | undefined;
-  const bandCount = opts.bands ?? 0;
-  if (bandCount > 0) {
+  // Resolve band boundaries: custom edges win over equal-height bands.
+  let edges: number[] | undefined;
+  if (opts.bandEdges && opts.bandEdges.length >= 2) {
+    const clamped = opts.bandEdges
+      .map((e) => Math.max(0, Math.min(h, Math.round(e))))
+      .sort((x, y) => x - y);
+    edges = clamped.filter((e, i) => i === 0 || e !== clamped[i - 1]);
+    if (edges.length < 2) edges = undefined;
+  } else if ((opts.bands ?? 0) > 0) {
+    const bandCount = opts.bands!;
+    edges = [];
+    for (let i = 0; i <= bandCount; i++) edges.push(i === bandCount ? h : Math.floor((i * h) / bandCount));
+  }
+  if (edges) {
     bands = [];
-    const bandH = h / bandCount;
-    const counts = new Array<number>(bandCount).fill(0);
-    for (let y = 0; y < h; y++) {
-      const band = Math.min(bandCount - 1, Math.floor(y / bandH));
-      for (let x = 0; x < w; x++) {
-        const i = (y * w + x) * 4;
-        // pixelmatch marks real diffs in diffColor red [255,0,0].
-        if (diff.data[i] === 255 && diff.data[i + 1] === 0 && diff.data[i + 2] === 0) counts[band]++;
+    const counts = new Array<number>(edges.length - 1).fill(0);
+    for (let seg = 0; seg < edges.length - 1; seg++) {
+      for (let y = edges[seg]; y < edges[seg + 1]; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          // pixelmatch marks real diffs in diffColor red [255,0,0].
+          if (diff.data[i] === 255 && diff.data[i + 1] === 0 && diff.data[i + 2] === 0) counts[seg]++;
+        }
       }
     }
-    for (let idx = 0; idx < bandCount; idx++) {
-      const yStart = Math.floor(idx * bandH);
-      const yEnd = idx === bandCount - 1 ? h : Math.floor((idx + 1) * bandH);
+    for (let seg = 0; seg < edges.length - 1; seg++) {
+      const yStart = edges[seg];
+      const yEnd = edges[seg + 1]; // exclusive
       const bandPixels = w * (yEnd - yStart);
-      bands.push({ index: idx, yStart, yEnd, diffRatio: counts[idx] / bandPixels, diffPixels: counts[idx] });
+      bands.push({ index: seg, yStart, yEnd, diffRatio: counts[seg] / bandPixels, diffPixels: counts[seg] });
     }
   }
 

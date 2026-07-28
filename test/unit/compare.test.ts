@@ -80,6 +80,43 @@ describe('comparePngBuffers', () => {
     expect(r.diffImagePath).toBe(out);
     expect(fs.existsSync(out)).toBe(true);
   });
+
+  it('bandEdges produce custom bands whose counts sum like the equal-bands path', () => {
+    const base = makePng(100, 100, () => [255, 255, 255, 255]);
+    // Diff pixels in y∈[40,60), x<10 → 200 pixels.
+    const changed = makePng(100, 100, (x, y) => (y >= 40 && y < 60 && x < 10 ? [0, 0, 0, 255] : [255, 255, 255, 255]));
+    const r = comparePngBuffers(base, changed, { bandEdges: [0, 30, 50, 100] });
+    expect(r.bands).toHaveLength(3);
+    expect(r.bands!.map((b) => [b.yStart, b.yEnd])).toEqual([
+      [0, 30],
+      [30, 50],
+      [50, 100],
+    ]);
+    // y∈[40,50) in band 1 (100px), y∈[50,60) in band 2 (100px).
+    expect(r.bands![1].diffPixels).toBe(100);
+    expect(r.bands![2].diffPixels).toBe(100);
+    expect(r.bands![0].diffPixels).toBe(0);
+    // Sum equivalence with the equal-bands path (full coverage → sums match).
+    const sumEdges = r.bands!.reduce((acc, b) => acc + b.diffPixels, 0);
+    const eq = comparePngBuffers(base, changed, { bands: 10 });
+    const sumBands = eq.bands!.reduce((acc, b) => acc + b.diffPixels, 0);
+    expect(sumEdges).toBe(sumBands);
+    expect(sumEdges).toBe(r.diffPixels);
+  });
+
+  it('bandEdges win over bands and are clamped/sorted/deduped', () => {
+    const base = makePng(50, 40, () => [255, 255, 255, 255]);
+    const changed = makePng(50, 40, (x, y) => (y < 10 ? [0, 0, 0, 255] : [255, 255, 255, 255]));
+    const r = comparePngBuffers(base, changed, { bands: 10, bandEdges: [40, 0, 20, 20, 999] });
+    // Edges normalize to [0, 20, 40] → 2 bands, NOT the 10 equal bands.
+    expect(r.bands).toHaveLength(2);
+    expect(r.bands!.map((b) => [b.yStart, b.yEnd])).toEqual([
+      [0, 20],
+      [20, 40],
+    ]);
+    expect(r.bands![0].diffPixels).toBe(50 * 10); // y∈[0,10) all black
+    expect(r.bands![1].diffPixels).toBe(0);
+  });
 });
 
 // ---- tool-level: real chromium render compared against itself ----
@@ -180,5 +217,31 @@ describe('compare_html_to_image tool', () => {
     const parsed = JSON.parse((res.content[0] as { text: string }).text);
     expect(parsed.passed).toBe(false);
     expect(parsed.error).toContain('reference_not_found');
+  });
+
+  it('outRenderPath persists the render PNG and methodology documents the AA accounting', async (ctx) => {
+    if (skipUnlessChrome()) return ctx.skip();
+    const { renderScreenshot } = await import('../../src/replica/render');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'figmingo-cmp-tool3-'));
+    const ref = path.join(dir, 'ref.png');
+    await renderScreenshot({ htmlPath: HTML_FIXTURE, outPath: ref, viewport: { width: 1440, height: 900 } });
+
+    const renderOut = path.join(dir, 'nested', 'render.png');
+    const res = await compareHtmlToImage.handler(makeCtx(), {
+      htmlPath: HTML_FIXTURE,
+      imagePath: ref,
+      viewportWidth: 1440,
+      viewportHeight: 900,
+      outRenderPath: renderOut,
+      bandEdges: [0, 450, 900],
+      bands: 10, // must be ignored in favor of bandEdges
+    });
+    const parsed = JSON.parse((res.content[0] as { text: string }).text);
+    expect(parsed.passed).toBe(true);
+    expect(parsed.renderPath).toBe(renderOut);
+    expect(fs.existsSync(renderOut)).toBe(true);
+    expect(fs.statSync(renderOut).size).toBeGreaterThan(1000);
+    expect(parsed.bands.map((b: { yStart: number }) => b.yStart)).toEqual([0, 450]);
+    expect(parsed.methodology).toEqual({ threshold: 0.1, maxRatio: 0.01, antiAliasCountedInDiff: false });
   });
 });

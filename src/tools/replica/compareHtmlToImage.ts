@@ -10,8 +10,10 @@ export const compareHtmlToImage: ToolDef = {
   name: 'compare_html_to_image',
   description:
     'One-shot visual comparison: renders an HTML page/element with Playwright (chromium) and pixel-diffs it ' +
-    'against a reference image (e.g. a Figma export). Returns pass/fail, diff ratio, anti-alias accounting, ' +
-    'and per-band diff localization so you can see WHERE the mismatch lives. Replaces the manual ' +
+    'against a reference image (e.g. a Figma export). passed = diffRatio <= maxRatio (default 0.01 = 1%; ' +
+    'raise maxRatio for rework/triage loops where you only need localization, not a strict gate). Returns ' +
+    'diff ratio, anti-alias accounting (see methodology in the response), and per-band diff localization — ' +
+    'equal-height bands or custom bandEdges so one band can map to one design element. Replaces the manual ' +
     'render_html_screenshot → write-a-diff-script two-step.',
   schema: {
     url: z.string().optional().describe('Remote URL to render.'),
@@ -25,24 +27,51 @@ export const compareHtmlToImage: ToolDef = {
     waitForImages: z.boolean().optional().default(true),
     settleMs: z.number().int().optional().default(300),
     imagePath: z.string().describe('Path to the reference image (PNG) to compare against.'),
-    threshold: z.number().optional().default(0.1).describe('pixelmatch color-delta threshold (0-1).'),
-    maxRatio: z.number().optional().default(VISUAL_MAX_RATIO).describe('Pass line for diffRatio.'),
+    threshold: z
+      .number()
+      .optional()
+      .default(0.1)
+      .describe('pixelmatch color-delta threshold (0-1). Smaller = stricter per-pixel color comparison.'),
+    maxRatio: z
+      .number()
+      .optional()
+      .default(VISUAL_MAX_RATIO)
+      .describe(
+        'Pass line: passed = diffRatio <= maxRatio. Default 0.01 (1%). For rework rounds, raise it (e.g. 0.05) ' +
+          'so the call still "passes" while you use bands/bandEdges to localize remaining diffs.',
+      ),
     bands: z
       .number()
       .int()
       .optional()
       .default(10)
-      .describe('Split the image vertically into N horizontal bands and report per-band diff ratios. 0 = off.'),
+      .describe('Split the image vertically into N equal-height horizontal bands and report per-band diff ratios. 0 = off. Ignored when bandEdges is set.'),
+    bandEdges: z
+      .array(z.number())
+      .optional()
+      .describe(
+        'Custom band boundaries, e.g. [0,120,280,974] → 3 bands [0,120) [120,280) [280,974). Lets one band map ' +
+          'to one design element. Values are clamped to the image height, sorted, deduped. Mutually exclusive ' +
+          'with bands — when both are given, bandEdges wins.',
+      ),
     outDiffPath: z.string().optional().describe('Where to save the diff PNG (red = mismatch). Temp file if omitted.'),
+    outRenderPath: z
+      .string()
+      .optional()
+      .describe(
+        'Also save the rendered screenshot to this path and return it as renderPath. Useful when you need the ' +
+          'render PNG itself (e.g. measuring line widths) without a second render_html_screenshot call.',
+      ),
     keepRenderPath: z
       .string()
       .optional()
-      .describe('Also save the rendered screenshot here and return its path. Discarded if omitted.'),
+      .describe('Deprecated alias of outRenderPath. If both are set, outRenderPath wins.'),
   },
   handler: async (_ctx, args) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'figmingo-cmp-'));
-    const renderPath = args.keepRenderPath ?? path.join(tmpDir, 'render.png');
-    if (args.keepRenderPath) fs.mkdirSync(path.dirname(args.keepRenderPath), { recursive: true });
+    const persistRenderPath = args.outRenderPath ?? args.keepRenderPath;
+    const renderPath = persistRenderPath ?? path.join(tmpDir, 'render.png');
+    if (persistRenderPath) fs.mkdirSync(path.dirname(persistRenderPath), { recursive: true });
     const diffPath = args.outDiffPath ?? path.join(tmpDir, 'diff.png');
     if (args.outDiffPath) fs.mkdirSync(path.dirname(args.outDiffPath), { recursive: true });
 
@@ -65,6 +94,7 @@ export const compareHtmlToImage: ToolDef = {
       threshold: args.threshold,
       maxRatio: args.maxRatio,
       bands: args.bands,
+      bandEdges: args.bandEdges,
       outPath: diffPath,
     });
     const payload: Record<string, unknown> = {
@@ -74,11 +104,20 @@ export const compareHtmlToImage: ToolDef = {
       totalPixels: result.totalPixels,
       antiAliasPixels: result.antiAliasPixels,
       size: result.size,
+      methodology: {
+        // Reflect the values actually used (zod defaults only apply when the
+        // server parses args; direct handler calls may leave them undefined).
+        threshold: args.threshold ?? 0.1,
+        maxRatio: args.maxRatio ?? VISUAL_MAX_RATIO,
+        // pixelmatch's primary count (includeAA: false) EXCLUDES pixels it flags as anti-aliased;
+        // antiAliasPixels is derived from a second includeAA run and is NOT part of diffPixels/diffRatio.
+        antiAliasCountedInDiff: false,
+      },
     };
     if (result.bands) payload.bands = result.bands;
     if (result.error) payload.error = result.error;
     if (!result.error && result.diffImagePath) payload.diffImagePath = result.diffImagePath;
-    if (args.keepRenderPath) payload.renderPath = renderPath;
+    if (persistRenderPath) payload.renderPath = renderPath;
     return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
     // Temp render/diff files stay in os.tmpdir() for the caller to inspect; the OS reclaims them.
   },
