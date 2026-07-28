@@ -54,9 +54,11 @@ CMD="$(command -v figmingo-mcp || echo "npx figmingo-mcp")"
 
 # --- 3. Figma token ----------------------------------------------------------
 if [ -z "$TOKEN" ] && [ -n "${FIGMA_API_KEY:-}" ]; then TOKEN="$FIGMA_API_KEY"; fi
-if [ -z "$TOKEN" ] && [ "$YES" -eq 0 ] && [ -t 0 ]; then
-  printf 'Figma Personal Access Token (leave empty to configure later): '
-  read -r TOKEN || true
+# Read from /dev/tty so interactive prompts also work in `curl | bash` installs
+# (where stdin is the script itself, not the keyboard).
+if [ -z "$TOKEN" ] && [ "$YES" -eq 0 ] && [ -r /dev/tty ]; then
+  printf 'Figma Personal Access Token (leave empty to configure later): ' > /dev/tty
+  read -r TOKEN < /dev/tty || true
 fi
 
 token_json() {
@@ -139,9 +141,11 @@ write_codex_config() {
 
 pick_clients() {
   if [ -n "$CLIENTS" ]; then echo "$CLIENTS"; return; fi
-  if [ "$YES" -eq 1 ] || [ ! -t 0 ]; then echo "cursor,claude-code,claude-desktop,vscode,kimi,codex"; return; fi
-  printf 'Configure which clients? [cursor,claude-code,claude-desktop,vscode,kimi,codex] (comma list, empty = all): '
-  local ans; read -r ans || true
+  # Prompt via /dev/tty so `curl | bash` installs stay interactive; only the
+  # answer goes to stdout (the caller captures this function's stdout).
+  if [ "$YES" -eq 1 ] || [ ! -r /dev/tty ]; then echo "cursor,claude-code,claude-desktop,vscode,kimi,codex"; return; fi
+  printf 'Configure which clients? [cursor,claude-code,claude-desktop,vscode,kimi,codex] (comma list, empty = all): ' > /dev/tty
+  local ans; read -r ans < /dev/tty || true
   echo "${ans:-cursor,claude-code,claude-desktop,vscode,kimi,codex}"
 }
 
