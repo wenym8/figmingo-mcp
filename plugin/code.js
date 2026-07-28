@@ -226,6 +226,33 @@ const handlers = {
             file: figma.root.name,
         };
     },
+    async get_file_info() {
+        return {
+            // figma.fileKey is undefined only for never-saved local files.
+            fileKey: figma.fileKey ?? null,
+            fileName: figma.root.name,
+            editorType: figma.editorType,
+            page: { id: figma.currentPage.id, name: figma.currentPage.name },
+        };
+    },
+    async get_page_children(params) {
+        const parent = params?.nodeId ? findNode(params.nodeId) : figma.currentPage;
+        if (!('children' in parent))
+            throw new Error(`node ${params?.nodeId} cannot have children`);
+        return {
+            parent: { id: parent.id, name: parent.name, type: parent.type },
+            children: parent.children.map((n) => ({
+                id: n.id,
+                name: n.name,
+                type: n.type,
+                x: n.x,
+                y: n.y,
+                width: n.width,
+                height: n.height,
+                childCount: 'children' in n ? n.children.length : 0,
+            })),
+        };
+    },
     async export_node(params) {
         const node = findNode(params.nodeId);
         const format = (params.format ?? 'PNG');

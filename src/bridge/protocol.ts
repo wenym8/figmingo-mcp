@@ -55,6 +55,8 @@ export const PLUGIN_COMMANDS = [
   'resize_node',
   'delete_node',
   'get_selection',
+  'get_file_info',
+  'get_page_children',
   'export_node',
 ] as const;
 

@@ -211,6 +211,34 @@ const handlers: Record<string, (params: any, vars: Map<string, string>) => Promi
     };
   },
 
+  async get_file_info() {
+    return {
+      // figma.fileKey is undefined only for never-saved local files.
+      fileKey: (figma as any).fileKey ?? null,
+      fileName: figma.root.name,
+      editorType: figma.editorType,
+      page: { id: figma.currentPage.id, name: figma.currentPage.name },
+    };
+  },
+
+  async get_page_children(params) {
+    const parent = params?.nodeId ? findNode(params.nodeId) : figma.currentPage;
+    if (!('children' in parent)) throw new Error(`node ${params?.nodeId} cannot have children`);
+    return {
+      parent: { id: (parent as any).id, name: (parent as any).name, type: (parent as any).type },
+      children: (parent as any).children.map((n: any) => ({
+        id: n.id,
+        name: n.name,
+        type: n.type,
+        x: n.x,
+        y: n.y,
+        width: n.width,
+        height: n.height,
+        childCount: 'children' in n ? n.children.length : 0,
+      })),
+    };
+  },
+
   async export_node(params) {
     const node = findNode(params.nodeId) as SceneNode;
     const format = (params.format ?? 'PNG') as ExportSettings['format'];
