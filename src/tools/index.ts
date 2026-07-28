@@ -10,6 +10,7 @@ import { whoami } from './read/whoami';
 import { getHtmlReplicaSpec } from './replica/getHtmlReplicaSpec';
 import { renderHtmlScreenshot } from './replica/renderHtmlScreenshot';
 import { verifyHtmlParity } from './replica/verifyHtmlParity';
+import { compareHtmlToImage } from './replica/compareHtmlToImage';
 import { bridgeStatus } from './write/bridgeStatus';
 import { executePluginCommand } from './write/executePluginCommand';
 import { importHtmlReplica } from './write/importHtmlReplica';
@@ -25,7 +26,7 @@ export const readTools: ToolDef[] = [
   whoami,
 ];
 
-export const replicaTools: ToolDef[] = [getHtmlReplicaSpec, renderHtmlScreenshot, verifyHtmlParity];
+export const replicaTools: ToolDef[] = [getHtmlReplicaSpec, renderHtmlScreenshot, verifyHtmlParity, compareHtmlToImage];
 
 export const writeTools: ToolDef[] = [bridgeStatus, executePluginCommand, importHtmlReplica];
 

@@ -85,6 +85,7 @@ AI client (Cursor / Claude Code / …)
 | `get_html_replica_spec` | Replica-optimized document: sections/elements with **absolute rects**, computed typography (family/style/size/letter-spacing/line-height/text-case), colors as hex+alpha, gradient data, asset manifest (icons→SVG nodes, image fills→download URLs, logo hints), text content. Ported design considerations from the internal `extract-layout.mjs` / `parity-lib.mjs`. |
 | `render_html_screenshot` | Playwright (chromium) screenshot of a local/remote HTML page or element selector; waits for images, hides fixed elements on request. |
 | `verify_html_parity` | The acceptance gate. Compares rendered HTML against the Figma spec + screenshots: **content gate** (copy, font, color), **structural gate** (position/size tolerance ±4 px), **visual gate** (pixelmatch diff ratio ≤ 1 %, 2 px crop tolerance). Emits a JSON report + diff images. |
+| `compare_html_to_image` | One-shot visual diff against any reference image: renders the HTML with the same Playwright pipeline, then runs `comparePngBuffers` (pixelmatch, configurable threshold/maxRatio, anti-alias accounting) with optional `bands: N` per-strip diff localization and `outDiffPath`/`keepRenderPath` artifacts. |
 
 ### Write tools (plugin bridge channel)
 

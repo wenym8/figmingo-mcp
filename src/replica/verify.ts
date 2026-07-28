@@ -432,12 +432,72 @@ export interface VisualGateResult {
 
 /** Pixel diff two PNG buffers with a 2px crop tolerance. */
 export function diffImages(bufA: Buffer, bufB: Buffer, outPath?: string, maxRatio = VISUAL_MAX_RATIO): VisualComparison & { diffRatio: number } {
-  const a = PNG.sync.read(bufA);
-  const b = PNG.sync.read(bufB);
+  const r = comparePngBuffers(bufA, bufB, { outPath, maxRatio });
+  return {
+    name: '',
+    passed: r.passed,
+    diffRatio: r.diffRatio,
+    diffPixels: r.diffPixels,
+    totalPixels: r.totalPixels,
+    diffPath: r.diffImagePath,
+    error: r.error,
+  };
+}
+
+export interface CompareBand {
+  index: number;
+  yStart: number;
+  yEnd: number; // exclusive
+  diffRatio: number;
+  diffPixels: number;
+}
+
+export interface ComparePngOptions {
+  /** pixelmatch color-delta threshold (default 0.1). */
+  threshold?: number;
+  /** Pass line for diffRatio (default VISUAL_MAX_RATIO). */
+  maxRatio?: number;
+  /** Write the diff PNG here. */
+  outPath?: string;
+  /** Number of horizontal bands for diff localization; 0/undefined = off. */
+  bands?: number;
+}
+
+export interface ComparePngResult {
+  passed: boolean;
+  diffRatio: number;
+  diffPixels: number;
+  totalPixels: number;
+  antiAliasPixels: number;
+  size: { render: [number, number]; reference: [number, number] };
+  bands?: CompareBand[];
+  diffImagePath?: string;
+  error?: string;
+}
+
+/**
+ * Core PNG comparison: pixelmatch (threshold configurable), 2px crop
+ * tolerance, anti-alias accounting, and per-band diff localization.
+ * First buffer = render, second = reference.
+ */
+export function comparePngBuffers(renderBuf: Buffer, referenceBuf: Buffer, opts: ComparePngOptions = {}): ComparePngResult {
+  const threshold = opts.threshold ?? 0.1;
+  const maxRatio = opts.maxRatio ?? VISUAL_MAX_RATIO;
+  const a = PNG.sync.read(renderBuf);
+  const b = PNG.sync.read(referenceBuf);
+  const size = { render: [a.width, a.height] as [number, number], reference: [b.width, b.height] as [number, number] };
   const w = Math.min(a.width, b.width);
   const h = Math.min(a.height, b.height);
   if (Math.abs(a.width - b.width) > VISUAL_CROP_TOL || Math.abs(a.height - b.height) > VISUAL_CROP_TOL) {
-    return { name: '', passed: false, diffRatio: 1, error: `size_mismatch ${a.width}x${a.height} vs ${b.width}x${b.height}` };
+    return {
+      passed: false,
+      diffRatio: 1,
+      diffPixels: 0,
+      totalPixels: 0,
+      antiAliasPixels: 0,
+      size,
+      error: `size_mismatch ${a.width}x${a.height} vs ${b.width}x${b.height} (crop tolerance ${VISUAL_CROP_TOL}px)`,
+    };
   }
   // Crop both to the common size so pixelmatch never sees mismatched data lengths.
   const crop = (data: Buffer, width: number) => {
@@ -451,13 +511,49 @@ export function diffImages(bufA: Buffer, bufB: Buffer, outPath?: string, maxRati
   const da = crop(a.data, a.width);
   const db = crop(b.data, b.width);
   const diff = new PNG({ width: w, height: h });
-  const diffPixels = pixelmatch(da, db, diff.data, w, h, { threshold: 0.1 });
-  const ratio = diffPixels / (w * h);
-  if (outPath) {
-    fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    fs.writeFileSync(outPath, PNG.sync.write(diff));
+  const diffPixels = pixelmatch(da, db, diff.data, w, h, { threshold });
+  // Anti-alias accounting: rerun with includeAA to separate AA pixels from real diffs.
+  const diffWithAA = pixelmatch(da, db, null as unknown as Buffer, w, h, { threshold, includeAA: true });
+  const antiAliasPixels = Math.max(0, diffWithAA - diffPixels);
+  const totalPixels = w * h;
+  const ratio = diffPixels / totalPixels;
+
+  let bands: CompareBand[] | undefined;
+  const bandCount = opts.bands ?? 0;
+  if (bandCount > 0) {
+    bands = [];
+    const bandH = h / bandCount;
+    const counts = new Array<number>(bandCount).fill(0);
+    for (let y = 0; y < h; y++) {
+      const band = Math.min(bandCount - 1, Math.floor(y / bandH));
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        // pixelmatch marks real diffs in diffColor red [255,0,0].
+        if (diff.data[i] === 255 && diff.data[i + 1] === 0 && diff.data[i + 2] === 0) counts[band]++;
+      }
+    }
+    for (let idx = 0; idx < bandCount; idx++) {
+      const yStart = Math.floor(idx * bandH);
+      const yEnd = idx === bandCount - 1 ? h : Math.floor((idx + 1) * bandH);
+      const bandPixels = w * (yEnd - yStart);
+      bands.push({ index: idx, yStart, yEnd, diffRatio: counts[idx] / bandPixels, diffPixels: counts[idx] });
+    }
   }
-  return { name: '', passed: ratio <= maxRatio, diffRatio: ratio, diffPixels, totalPixels: w * h, diffPath: outPath };
+
+  if (opts.outPath) {
+    fs.mkdirSync(path.dirname(opts.outPath), { recursive: true });
+    fs.writeFileSync(opts.outPath, PNG.sync.write(diff));
+  }
+  return {
+    passed: ratio <= maxRatio,
+    diffRatio: ratio,
+    diffPixels,
+    totalPixels,
+    antiAliasPixels,
+    size,
+    bands,
+    diffImagePath: opts.outPath,
+  };
 }
 
 export function runVisualGate(

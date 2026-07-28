@@ -98,7 +98,7 @@ figmingo-mcp --help
 Flags: `--token <pat>` · `--http` · `--port <n>` · `--bridge-port <n>` ·
 `--no-bridge` · `--cache-ttl <min>` · `--cache-root <path>` · `--no-cache`.
 
-## Tools (14)
+## Tools (15)
 
 ### Read tools (REST + PAT, free plan OK)
 
@@ -123,6 +123,7 @@ param is honored).
 | `get_html_replica_spec` | Replica-optimized document: sections/elements with **absolute rects**, computed typography (family/style/size/letter-spacing/line-height/text-case), hex+alpha colors, gradient data, and an asset manifest (icons→SVG, image fills→URLs, logo/icon hints via configurable patterns). Writes `<outPath>` and returns a summary. |
 | `render_html_screenshot` | Playwright (chromium) screenshot of a URL / local HTML file / raw HTML string; waits for images, optional `hideFixed`, `selector` element captures, full-page default. |
 | `verify_html_parity` | The acceptance gate. Renders the HTML, extracts its layout, then runs three gates against the Figma spec: **content** (copy/font/color), **structural** (±4 px position/size), **visual** (pixelmatch diff ratio ≤ 1 %, 2 px crop tolerance). Emits `report.json` + diff images. |
+| `compare_html_to_image` | One-shot visual diff: renders the HTML (same Playwright options as `render_html_screenshot`) and pixel-diffs it against any reference image (e.g. a Figma export). Returns pass/fail, diff ratio, anti-alias accounting, and **per-band diff localization** (`bands: N` splits the image into N horizontal strips and reports where the mismatches live). Eliminates the render → hand-written diff script two-step. |
 
 The output schema of `get_html_replica_spec` **is** the input schema of
 `verify_html_parity` (`specPath` or inline `spec`) — the closed loop.
