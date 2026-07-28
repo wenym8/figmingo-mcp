@@ -1,0 +1,8 @@
+{
+  "err": null,
+  "images": {
+    "1:2": "https://figma-renders.example.com/abc/render-1-2.png",
+    "1:11": "https://figma-renders.example.com/abc/render-1-11.png",
+    "1:21": "https://figma-renders.example.com/abc/render-1-21.svg"
+  }
+}

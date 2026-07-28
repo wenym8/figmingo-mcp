@@ -1,0 +1,62 @@
+{
+  "name": "figmingo-mcp",
+  "version": "0.1.0",
+  "description": "Local-first Figma MCP server. Full read-side parity with the official Figma MCP on free plans, HTML 1:1 replica tooling with three-gate parity verification, and write-to-canvas via a companion plugin bridge.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "figma",
+    "mcp",
+    "model-context-protocol",
+    "design-to-code",
+    "figma-api",
+    "html-replica"
+  ],
+  "bin": {
+    "figmingo-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "plugin/manifest.json",
+    "plugin/code.js",
+    "plugin/README.md",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    "ARCHITECTURE.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup && npm run build:plugin",
+    "build:plugin": "tsc -p plugin/tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "accept": "vitest run test/acceptance",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "pixelmatch": "^5.3.0",
+    "playwright": "^1.49.0",
+    "pngjs": "^7.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.100.0",
+    "@types/node": "^22.10.0",
+    "@types/pixelmatch": "^5.2.5",
+    "@types/pngjs": "^6.0.5",
+    "@types/ws": "^8.5.13",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.3",
+    "vitest": "^3.0.0"
+  }
+}

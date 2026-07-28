@@ -1,0 +1,12 @@
+{
+  "name": "figmingo",
+  "id": "figmingo-local-bridge",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["ws://127.0.0.1:39220"],
+    "reasoning": "figmingo is local-first: the plugin talks only to the figmingo-mcp server running on your own machine (ws://127.0.0.1:39220). Image bytes are pushed from the local server; no external network access is needed."
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "status": 403,
+  "err": "This endpoint is only available to Enterprise plan teams",
+  "message": "This endpoint is only available to Enterprise plan teams"
+}

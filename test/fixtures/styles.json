@@ -1,0 +1,32 @@
+{
+  "status": 200,
+  "error": false,
+  "meta": {
+    "styles": [
+      {
+        "key": "style-key-1",
+        "file_key": "testFileKey123",
+        "node_id": "1:13",
+        "style_type": "FILL",
+        "thumbnail_url": "https://figma-thumbs.example.com/style.png",
+        "name": "Color/Brand Blue",
+        "description": "Brand primary",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-06-01T00:00:00Z",
+        "sort_position": "~"
+      },
+      {
+        "key": "style-key-2",
+        "file_key": "testFileKey123",
+        "node_id": "1:11",
+        "style_type": "TEXT",
+        "thumbnail_url": "https://figma-thumbs.example.com/style2.png",
+        "name": "Type/Heading XL",
+        "description": "",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-06-01T00:00:00Z",
+        "sort_position": "~~"
+      }
+    ]
+  }
+}

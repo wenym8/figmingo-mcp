@@ -1,0 +1,229 @@
+{
+  "name": "Landing Page Test File",
+  "lastModified": "2026-07-01T10:00:00Z",
+  "version": "123456",
+  "role": "owner",
+  "editorType": "figma",
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT",
+    "children": [
+      {
+        "id": "0:1",
+        "name": "Page 1",
+        "type": "CANVAS",
+        "backgroundColor": { "r": 1, "g": 1, "b": 1, "a": 1 },
+        "children": [
+          {
+            "id": "1:2",
+            "name": "Landing Page",
+            "type": "FRAME",
+            "visible": true,
+            "absoluteBoundingBox": { "x": 0, "y": 0, "width": 1440, "height": 900 },
+            "clipsContent": true,
+            "fills": [{ "type": "SOLID", "color": { "r": 1, "g": 1, "b": 1, "a": 1 } }],
+            "children": [
+              {
+                "id": "1:3",
+                "name": "Header",
+                "type": "FRAME",
+                "visible": true,
+                "absoluteBoundingBox": { "x": 0, "y": 0, "width": 1440, "height": 64 },
+                "layoutMode": "HORIZONTAL",
+                "itemSpacing": 24,
+                "paddingLeft": 32,
+                "paddingRight": 32,
+                "paddingTop": 16,
+                "paddingBottom": 16,
+                "primaryAxisAlignItems": "SPACE_BETWEEN",
+                "counterAxisAlignItems": "CENTER",
+                "fills": [{ "type": "SOLID", "color": { "r": 0.96, "g": 0.97, "b": 0.98, "a": 1 } }],
+                "children": [
+                  {
+                    "id": "1:4",
+                    "name": "Logo",
+                    "type": "TEXT",
+                    "visible": true,
+                    "absoluteBoundingBox": { "x": 32, "y": 20, "width": 120, "height": 24 },
+                    "characters": "ACME",
+                    "fills": [{ "type": "SOLID", "color": { "r": 0.067, "g": 0.067, "b": 0.067, "a": 1 } }],
+                    "style": {
+                      "fontFamily": "Inter",
+                      "fontPostScriptName": "Inter-Bold",
+                      "fontWeight": 700,
+                      "fontSize": 20,
+                      "letterSpacing": 0.5,
+                      "lineHeightPx": 24,
+                      "lineHeightPercentFontSize": 120,
+                      "textCase": "UPPER",
+                      "textAlignHorizontal": "LEFT",
+                      "textAlignVertical": "CENTER"
+                    }
+                  },
+                  {
+                    "id": "1:5",
+                    "name": "Nav Link",
+                    "type": "TEXT",
+                    "visible": true,
+                    "absoluteBoundingBox": { "x": 1300, "y": 22, "width": 100, "height": 20 },
+                    "characters": "Sign in",
+                    "fills": [{ "type": "SOLID", "color": { "r": 0.2, "g": 0.2, "b": 0.2, "a": 1 } }],
+                    "style": {
+                      "fontFamily": "Inter",
+                      "fontPostScriptName": "Inter-Regular",
+                      "fontWeight": 400,
+                      "fontSize": 14,
+                      "lineHeightPx": 20,
+                      "textAlignHorizontal": "RIGHT"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "1:10",
+                "name": "Hero",
+                "type": "FRAME",
+                "visible": true,
+                "absoluteBoundingBox": { "x": 0, "y": 64, "width": 1440, "height": 500 },
+                "layoutMode": "VERTICAL",
+                "itemSpacing": 16,
+                "paddingLeft": 120,
+                "paddingTop": 80,
+                "fills": [
+                  {
+                    "type": "GRADIENT_LINEAR",
+                    "gradientTransform": [[1, 0, 0], [0, 1, 0]],
+                    "gradientStops": [
+                      { "position": 0, "color": { "r": 0.94, "g": 0.97, "b": 0.99, "a": 1 } },
+                      { "position": 1, "color": { "r": 1, "g": 1, "b": 1, "a": 1 } }
+                    ]
+                  }
+                ],
+                "children": [
+                  {
+                    "id": "1:11",
+                    "name": "Headline",
+                    "type": "TEXT",
+                    "visible": true,
+                    "absoluteBoundingBox": { "x": 120, "y": 144, "width": 700, "height": 68 },
+                    "characters": "Build faster with ACME",
+                    "fills": [{ "type": "SOLID", "color": { "r": 0.067, "g": 0.067, "b": 0.067, "a": 1 } }],
+                    "style": {
+                      "fontFamily": "Inter",
+                      "fontPostScriptName": "Inter-Bold",
+                      "fontWeight": 700,
+                      "fontSize": 56,
+                      "letterSpacing": -1,
+                      "lineHeightPx": 64,
+                      "textAlignHorizontal": "LEFT"
+                    }
+                  },
+                  {
+                    "id": "1:12",
+                    "name": "Subhead",
+                    "type": "TEXT",
+                    "visible": true,
+                    "absoluteBoundingBox": { "x": 120, "y": 228, "width": 620, "height": 28 },
+                    "characters": "Ship pixel-perfect pages from your designs.",
+                    "fills": [{ "type": "SOLID", "color": { "r": 0.33, "g": 0.33, "b": 0.33, "a": 1 } }],
+                    "style": {
+                      "fontFamily": "Inter",
+                      "fontPostScriptName": "Inter-Regular",
+                      "fontWeight": 400,
+                      "fontSize": 18,
+                      "lineHeightPx": 28
+                    }
+                  },
+                  {
+                    "id": "1:13",
+                    "name": "Button/Primary",
+                    "type": "COMPONENT",
+                    "visible": true,
+                    "absoluteBoundingBox": { "x": 120, "y": 288, "width": 180, "height": 48 },
+                    "cornerRadius": 8,
+                    "layoutMode": "HORIZONTAL",
+                    "primaryAxisAlignItems": "CENTER",
+                    "counterAxisAlignItems": "CENTER",
+                    "fills": [{ "type": "SOLID", "color": { "r": 0, "g": 0.353, "b": 0.533, "a": 1 } }],
+                    "styles": { "fill": "S:1" },
+                    "children": [
+                      {
+                        "id": "1:14",
+                        "name": "Label",
+                        "type": "TEXT",
+                        "visible": true,
+                        "absoluteBoundingBox": { "x": 150, "y": 302, "width": 120, "height": 20 },
+                        "characters": "Get started",
+                        "fills": [{ "type": "SOLID", "color": { "r": 1, "g": 1, "b": 1, "a": 1 } }],
+                        "style": {
+                          "fontFamily": "Inter",
+                          "fontPostScriptName": "Inter-SemiBold",
+                          "fontWeight": 600,
+                          "fontSize": 16,
+                          "lineHeightPx": 20,
+                          "textAlignHorizontal": "CENTER"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "1:20",
+                "name": "Product Shot",
+                "type": "RECTANGLE",
+                "visible": true,
+                "absoluteBoundingBox": { "x": 900, "y": 144, "width": 400, "height": 300 },
+                "cornerRadius": 12,
+                "fills": [{ "type": "IMAGE", "imageRef": "abc123hash", "scaleMode": "FILL" }]
+              },
+              {
+                "id": "1:21",
+                "name": "icon/check",
+                "type": "VECTOR",
+                "visible": true,
+                "absoluteBoundingBox": { "x": 120, "y": 600, "width": 24, "height": 24 },
+                "fills": [{ "type": "SOLID", "color": { "r": 0, "g": 0.573, "b": 0.612, "a": 1 } }]
+              },
+              {
+                "id": "1:22",
+                "name": "Footer",
+                "type": "FRAME",
+                "visible": true,
+                "absoluteBoundingBox": { "x": 0, "y": 800, "width": 1440, "height": 100 },
+                "fills": [{ "type": "SOLID", "color": { "r": 0.067, "g": 0.067, "b": 0.067, "a": 1 } }],
+                "children": [
+                  {
+                    "id": "1:23",
+                    "name": "Copyright",
+                    "type": "TEXT",
+                    "visible": true,
+                    "absoluteBoundingBox": { "x": 32, "y": 840, "width": 300, "height": 20 },
+                    "characters": "© 2026 ACME Inc.",
+                    "fills": [{ "type": "SOLID", "color": { "r": 1, "g": 1, "b": 1, "a": 0.8 }, "opacity": 1 }],
+                    "style": {
+                      "fontFamily": "Inter",
+                      "fontPostScriptName": "Inter-Regular",
+                      "fontWeight": 400,
+                      "fontSize": 14,
+                      "lineHeightPx": 20
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "components": {
+    "1:13": { "key": "comp-key-1", "name": "Button/Primary", "description": "Primary CTA button", "nodeId": "1:13" }
+  },
+  "componentSets": {},
+  "styles": {
+    "S:1": { "key": "style-key-1", "name": "Color/Brand Blue", "style_type": "FILL", "node_id": "1:13", "description": "Brand primary" }
+  },
+  "schemaVersion": 0
+}
