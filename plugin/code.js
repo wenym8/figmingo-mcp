@@ -172,9 +172,22 @@ const handlers = {
             text.opacity = params.opacity;
         if (params.fills)
             applyFills(text, params.fills);
+        const autoResize = params.textAutoResize ?? (params.width || params.height ? 'NONE' : undefined);
+        if (autoResize)
+            text.textAutoResize = autoResize;
         if (params.width || params.height) {
-            text.textAutoResize = 'NONE';
-            text.resize(Math.max(1, params.width ?? text.width), Math.max(1, params.height ?? text.height));
+            if (autoResize === 'HEIGHT') {
+                // Fixed width; height follows content (paragraph text).
+                text.resize(Math.max(1, params.width ?? text.width), text.height);
+            }
+            else if (autoResize !== 'WIDTH_AND_HEIGHT') {
+                // NONE (legacy path): fixed box, may wrap/clip.
+                text.textAutoResize = 'NONE';
+                text.resize(Math.max(1, params.width ?? text.width), Math.max(1, params.height ?? text.height));
+            }
+            // WIDTH_AND_HEIGHT: Figma sizes the box from the content — a fixed
+            // resize would fight auto-width (Chromium→Figma metric drift otherwise
+            // wraps single-line text into two lines).
         }
         return { nodeId: text.id, fontApplied: font, ...(fallback ? { fontFallback: fallback } : {}) };
     },

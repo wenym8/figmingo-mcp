@@ -55,6 +55,12 @@ export interface ReplicaElement {
   /** Container clips its children (HTML overflow != visible → Figma clipsContent). */
   clipsContent?: boolean;
   /**
+   * Text auto-resize hint for create_text (Chromium→Figma metric drift makes
+   * fixed-width single-line text wrap). Extractor sets this from the measured
+   * line count; importer falls back to a height/fontSize heuristic.
+   */
+  textAutoResize?: 'WIDTH_AND_HEIGHT' | 'HEIGHT' | 'NONE';
+  /**
    * Nested children for container elements (produced by the HTML extractor).
    * When present on the section root element the importer recurses with
    * parent-relative coordinate conversion; flat specs (no children anywhere)
@@ -80,6 +86,8 @@ export interface ReplicaAsset {
   hash?: string;
   /** Download URL (temp Figma URL or empty until downloaded). */
   url?: string;
+  /** Original vector source (data:image/svg+xml or file/http URL) when `url` is a rasterized PNG of an SVG. */
+  vectorUrl?: string;
   scaleMode?: string;
   fileName: string;
   width?: number;
@@ -91,7 +99,7 @@ export interface ReplicaSpec {
   source: 'figma-rest' | 'html';
   file?: { key?: string; name?: string; lastModified?: string };
   node: { id: string; name: string; type: string };
-  canvas: { width: number; height: number; background?: string };
+  canvas: { width: number; height: number; background?: string; backgroundImage?: string };
   sections: ReplicaSection[];
   assets: ReplicaAsset[];
   metadata: { generatedAt: string; options?: Record<string, unknown> };

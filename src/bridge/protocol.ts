@@ -90,7 +90,9 @@ export type PluginCommandName = (typeof PLUGIN_COMMANDS)[number];
  * - create_text: fontName {family, style} plus optional `fallbackStyles`
  *   (same-family style names tried in order when the requested style fails to
  *   load); the result reports `fontApplied` and `fontFallback` so callers can
- *   surface degradations instead of silently landing on Regular.
+ *   surface degradations instead of silently landing on Regular. Optional
+ *   `textAutoResize` (WIDTH_AND_HEIGHT for single-line, HEIGHT for
+ *   paragraphs) keeps Figma from wrapping Chromium-measured fixed widths.
  * - insert_image: bytesBase64 (raster only — SVG payloads are rejected with an
  *   explicit error), scaleMode, cornerRadius, stroke params, opacity.
  * - set_fills / set_effects: nodeId + payload; set_fills reads the fills back

@@ -9,9 +9,17 @@
  *  - `<img>`                    → type 'image', asset with resolved absolute URL
  *                                 (relative src resolved against the document
  *                                 base; data: URLs kept as-is).
- *  - `<svg>`                    → type 'svg', asset as a data:image/svg+xml URL.
- *                                 (Figma's createImage cannot rasterize SVG —
- *                                 the importer emits a warning + placeholder.)
+ *  - `<svg>`                    → rasterized in-page to a transparent PNG at
+ *                                 `rasterScale`× (default 2x) the display size
+ *                                 (XMLSerializer → Blob → Image → canvas), so
+ *                                 icons import as REAL images; type 'image',
+ *                                 original vector markup kept in
+ *                                 asset.vectorUrl. With rasterizeSvg:false (or
+ *                                 on raster failure) it degrades to type 'svg'
+ *                                 + a data:image/svg+xml asset (importer warns
+ *                                 and places a placeholder).
+ *  - `<img src="*.svg">`        → same rasterization (canvas drawImage of the
+ *                                 loaded bitmap); vector URL in vectorUrl.
  *  - leaf element with own text → type 'text' (any tag; a div with direct text
  *                                 and no element children is text).
  *  - leaf element without text  → type 'frame' (a visual box: background /
@@ -47,9 +55,14 @@
  * Sections: by default the whole page is ONE section rooted at `rootSelector`
  * (default body) — HTML replicas are usually a single screen. Pass
  * `sectionSelector` to split the page into one section per matched element
- * (nested matches collapse to the outermost). When the root is <body>, its
- * background moves to spec.canvas.background (Figma-canvas-like), matching
- * the hand-written spec convention.
+ * (nested matches collapse to the outermost). The page background (body wins
+ * over html, per CSS canvas propagation; solid or gradient) moves to
+ * spec.canvas.background/backgroundImage and becomes the main frame fill.
+ *
+ * Text elements carry a `textAutoResize` hint: single-line (measured lines <
+ * 1.6, or white-space != normal) → 'WIDTH_AND_HEIGHT' so Figma sizes to
+ * content instead of wrapping a Chromium-measured fixed width; multi-line →
+ * 'HEIGHT' (fixed width, wrapping preserved).
  *
  * Webfont families seen by document.fonts are recorded in
  * spec.metadata.options.webfonts for downstream font mapping.
@@ -67,6 +80,10 @@ export interface ExtractHtmlSpecOptions extends RenderOptions {
   sectionSelector?: string;
   /** Frame/spec name (default: document title or the HTML file basename). */
   name?: string;
+  /** Rasterize inline <svg> and <img src="*.svg"> to transparent PNGs (default true). */
+  rasterizeSvg?: boolean;
+  /** Raster scale factor vs display size (default 2, retina). */
+  rasterScale?: number;
 }
 
 export interface ExtractHtmlSpecResult {
@@ -87,6 +104,8 @@ export interface RawDomNode {
   rect: { x: number; y: number; width: number; height: number };
   src?: string;
   svg?: string;
+  /** Rasterized PNG data URL (2x) for SVG content — inline <svg> and <img src="*.svg">. */
+  rasterPng?: string;
   imgBroken?: boolean;
   overflow?: string;
   style: {
@@ -101,6 +120,7 @@ export interface RawDomNode {
     letterSpacing?: string;
     textAlign?: string;
     textTransform?: string;
+    whiteSpace?: string;
     opacity?: string;
     borderRadius?: [string, string, string, string];
     borderWidth?: [string, string, string, string];
@@ -120,6 +140,8 @@ export interface RawDomResult {
   pageHeight: number;
   fonts: string[];
   warnings: string[];
+  /** Computed page background candidates (CSS canvas propagation: body wins over html). */
+  pageBackground: { body: { color?: string; image?: string }; html: { color?: string; image?: string } };
   sections: RawDomSection[];
 }
 
@@ -133,10 +155,17 @@ async function extractRawDom(
   const browser = await launchBrowser();
   try {
     const page = await openPage(browser, opts);
-    const params = { rootSelector: opts.rootSelector ?? 'body', sectionSelector: opts.sectionSelector ?? null };
-    const raw = await page.evaluate((p) => {
+    const params = {
+      rootSelector: opts.rootSelector ?? 'body',
+      sectionSelector: opts.sectionSelector ?? null,
+      rasterizeSvg: opts.rasterizeSvg !== false,
+      rasterScale: opts.rasterScale ?? 2,
+    };
+    const raw = await page.evaluate(async (p) => {
       const warnings: string[] = [];
       const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'template', 'head', 'meta', 'link', 'title', 'br']);
+      // Elements whose vector content should be rasterized to PNG (retina).
+      const rasterQueue: Array<{ node: Record<string, unknown>; el: Element; kind: 'svg' | 'svg-img' }> = [];
 
       function rectOf(el: Element) {
         const r = el.getBoundingClientRect();
@@ -195,6 +224,7 @@ async function extractRawDom(
             letterSpacing: cs.letterSpacing,
             textAlign: cs.textAlign,
             textTransform: cs.textTransform,
+            whiteSpace: cs.whiteSpace,
             opacity: cs.opacity,
             borderRadius: [cs.borderTopLeftRadius, cs.borderTopRightRadius, cs.borderBottomRightRadius, cs.borderBottomLeftRadius],
             borderWidth: [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth],
@@ -210,10 +240,44 @@ async function extractRawDom(
           if (!img.complete || img.naturalWidth === 0) {
             node.imgBroken = true;
             warnings.push(`img failed to load: ${node.src ?? '(no src)'}`);
+          } else if (p.rasterizeSvg && /\.svg(\?|#|$)/i.test(String(node.src ?? ''))) {
+            rasterQueue.push({ node, el, kind: 'svg-img' });
           }
         }
-        if (tag === 'svg') node.svg = el.outerHTML;
+        if (tag === 'svg') {
+          node.svg = el.outerHTML;
+          if (p.rasterizeSvg) rasterQueue.push({ node, el, kind: 'svg' });
+        }
         return node;
+      }
+
+      /** Draw an SVG (markup string) into a transparent canvas at `scale`× the display size. */
+      async function rasterizeMarkup(markup: string, dispW: number, dispH: number, scale: number): Promise<string> {
+        const w = Math.max(1, Math.round(dispW * scale));
+        const h = Math.max(1, Math.round(dispH * scale));
+        let src = markup;
+        if (!src.includes('xmlns=')) src = src.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+        // Force explicit pixel size so the raster is not tied to viewBox units.
+        src = src.replace(/<svg([^>]*)>/, (_m, attrs: string) => {
+          const cleaned = attrs.replace(/\s(width|height)="[^"]*"/g, '');
+          return `<svg${cleaned} width="${w}" height="${h}">`;
+        });
+        const url = URL.createObjectURL(new Blob([src], { type: 'image/svg+xml;charset=utf-8' }));
+        try {
+          const img = new Image();
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => reject(new Error('svg image decode failed'));
+            img.src = url;
+          });
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+          return canvas.toDataURL('image/png');
+        } finally {
+          URL.revokeObjectURL(url);
+        }
       }
 
       const rootEl = document.querySelector(p.rootSelector);
@@ -236,6 +300,32 @@ async function extractRawDom(
         })
         .filter(Boolean);
 
+      // Rasterize queued SVG content (2x, transparent PNG). Failures keep the
+      // vector asset and degrade to the importer's placeholder + warning path.
+      for (const item of rasterQueue) {
+        try {
+          const r = item.node.rect as { width: number; height: number };
+          const markup = item.kind === 'svg' ? String(item.node.svg ?? '') : '';
+          if (item.kind === 'svg-img') {
+            // <img src="*.svg">: draw the already-loaded bitmap directly.
+            const img = item.el as HTMLImageElement;
+            const w = Math.max(1, Math.round(r.width * p.rasterScale));
+            const h = Math.max(1, Math.round(r.height * p.rasterScale));
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+            item.node.rasterPng = canvas.toDataURL('image/png');
+          } else if (markup) {
+            item.node.rasterPng = await rasterizeMarkup(markup, r.width, r.height, p.rasterScale);
+          }
+        } catch (err) {
+          warnings.push(
+            `svg rasterize failed for "${item.node.id ?? item.node.className ?? item.kind}": ${(err as Error).message}`,
+          );
+        }
+      }
+
       const fonts: string[] = [];
       try {
         (document as Document & { fonts?: { forEach?: (cb: (f: { family: string; status: string }) => void) => void } }).fonts?.forEach?.(
@@ -247,11 +337,18 @@ async function extractRawDom(
         /* document.fonts unavailable */
       }
 
+      const bgOf = (el: Element | null) => {
+        if (!el) return {};
+        const cs = getComputedStyle(el);
+        return { color: cs.backgroundColor, image: cs.backgroundImage };
+      };
+
       return {
         viewport: { width: window.innerWidth, height: window.innerHeight },
         pageHeight: Math.round(document.documentElement.scrollHeight),
         fonts: Array.from(new Set(fonts)),
         warnings,
+        pageBackground: { body: bgOf(document.body), html: bgOf(document.documentElement) },
         sections,
       };
     }, params);
@@ -409,6 +506,20 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
     return out;
   };
 
+  /**
+   * Single-line text gets WIDTH_AND_HEIGHT (Figma sizes to content — Chromium
+   * vs Figma metric drift otherwise wraps fixed-width boxes); multi-line
+   * paragraphs get HEIGHT (fixed width, wraps, height follows content).
+   */
+  const textAutoResizeFor = (node: RawDomNode): 'WIDTH_AND_HEIGHT' | 'HEIGHT' => {
+    const fontSize = pxNum(node.style.fontSize) ?? 16;
+    const lhRaw = node.style.lineHeight;
+    const lh = lhRaw && lhRaw !== 'normal' ? pxNum(lhRaw) ?? fontSize * 1.2 : fontSize * 1.2;
+    const ws = node.style.whiteSpace ?? 'normal';
+    if (ws !== 'normal') return 'WIDTH_AND_HEIGHT';
+    return node.rect.height / lh < 1.6 ? 'WIDTH_AND_HEIGHT' : 'HEIGHT';
+  };
+
   const elementFor = (node: RawDomNode, parentKey: string): ReplicaElement | null => {
     const id = nid();
     const key = parentKey ? `${parentKey}/${node.tag}` : node.tag;
@@ -425,7 +536,12 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
     if (node.tag === 'img') {
       base.type = 'image';
       base.style = styleOf(node, false);
-      if (node.src) {
+      if (node.rasterPng) {
+        // <img src="*.svg"> rasterized at extraction: PNG asset + vector source in meta.
+        const asset = addAsset('image', node.rasterPng, fileNameFor(node.src ?? '', `${name}.png`).replace(/\.svg$/i, '.png'));
+        asset.vectorUrl ??= node.src;
+        base.assetId = asset.id;
+      } else if (node.src) {
         const asset = addAsset('image', node.src, fileNameFor(node.src, `${name}.png`));
         base.assetId = asset.id;
       }
@@ -435,8 +551,18 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
     }
 
     if (node.tag === 'svg') {
-      base.type = 'svg';
       base.assetHint = 'icon';
+      if (node.rasterPng) {
+        // Inline SVG rasterized to a transparent PNG at 2x: real image into
+        // Figma; the original vector markup stays in asset.vectorUrl.
+        base.type = 'image';
+        base.style = styleOf(node, false);
+        const asset = addAsset('image', node.rasterPng, `${name}.png`);
+        if (node.svg) asset.vectorUrl ??= `data:image/svg+xml;utf8,${encodeURIComponent(node.svg)}`;
+        base.assetId = asset.id;
+        return base;
+      }
+      base.type = 'svg';
       if (node.svg) {
         const url = `data:image/svg+xml;utf8,${encodeURIComponent(node.svg)}`;
         const asset = addAsset('svg', url, `${name}.svg`);
@@ -466,6 +592,7 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
         base.type = 'text';
         base.text = node.text;
         base.style = styleOf(node, true);
+        base.textAutoResize = textAutoResizeFor(node);
         return base;
       }
       // Button/input-like: visible box + label → frame with synthetic text child.
@@ -481,6 +608,7 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
           rect: { ...node.rect },
           style: textStyle,
           text: node.text,
+          textAutoResize: textAutoResizeFor(node),
         },
       ];
       return base;
@@ -507,6 +635,7 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
           rect: { ...node.rect },
           style: styleOf(node, true),
           text: node.text,
+          textAutoResize: textAutoResizeFor(node),
         },
         ...kids,
       ];
@@ -557,19 +686,40 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
     s.elements.forEach(shiftEl);
   }
 
-  // <body> background becomes the Figma canvas background (page-level paint).
-  let canvasBg: string | undefined;
+  // Page background → Figma main-frame fill. CSS canvas propagation: body's
+  // background wins; if body is transparent, html's background paints the
+  // canvas. Covers solid colors and gradients. When the section root IS
+  // body/html the background is stripped from the section (moved, not copied).
+  const resolveBg = (bg?: { color?: string; image?: string }) => ({
+    color: parseCssColor(bg?.color)?.hex,
+    gradient: gradientFromBackgroundImage(bg?.image),
+  });
+  const bodyBg = resolveBg(raw.pageBackground?.body);
+  const htmlBg = resolveBg(raw.pageBackground?.html);
+  let pageBg = bodyBg.color !== undefined || bodyBg.gradient !== undefined ? bodyBg : htmlBg;
+  if (pageBg.color === undefined && pageBg.gradient === undefined) {
+    // Fallback for raw trees without pageBackground (hand-built / legacy):
+    // use the single body/html section root's own background.
+    const firstRoot = raw.sections[0]?.root;
+    if (raw.sections.length === 1 && firstRoot && (firstRoot.tag === 'body' || firstRoot.tag === 'html')) {
+      pageBg = resolveBg({ color: firstRoot.style.backgroundColor, image: firstRoot.style.backgroundImage });
+    }
+  }
+  let canvasBg: string | undefined = pageBg.color;
+  const canvasBgImage: string | undefined = pageBg.gradient;
+
   const first = raw.sections[0]?.root;
   if (sections.length === 1 && first && (first.tag === 'body' || first.tag === 'html')) {
-    const bg = parseCssColor(first.style.backgroundColor);
-    if (bg?.hex) {
-      canvasBg = bg.hex;
+    const rootBg = resolveBg({ color: first.style.backgroundColor, image: first.style.backgroundImage });
+    if (rootBg.color !== undefined || rootBg.gradient !== undefined) {
       delete sections[0].style.backgroundColor;
       delete sections[0].style.backgroundAlpha;
+      delete sections[0].style.backgroundImage;
       const rootEl = sections[0].elements[0];
       if (rootEl) {
         delete rootEl.style.backgroundColor;
         delete rootEl.style.backgroundAlpha;
+        delete rootEl.style.backgroundImage;
       }
     }
   }
@@ -578,7 +728,12 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
     version: 1,
     source: 'html',
     node: { id: 'html-root', name: opts.name ?? 'html-replica', type: 'PAGE' },
-    canvas: { width: Math.max(1, Math.round(cx1 - cx0)), height: Math.max(1, Math.round(cy1 - cy0)), background: canvasBg },
+    canvas: {
+      width: Math.max(1, Math.round(cx1 - cx0)),
+      height: Math.max(1, Math.round(cy1 - cy0)),
+      background: canvasBg,
+      backgroundImage: canvasBgImage,
+    },
     sections,
     assets,
     metadata: {

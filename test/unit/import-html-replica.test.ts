@@ -267,3 +267,60 @@ describe('import_html_replica tool', () => {
     expect(parsed.warnings.some((w: string) => w.includes('svg "icon"'))).toBe(true);
   });
 });
+
+describe('P1/P2 importer support', () => {
+  it('P1: create_text carries textAutoResize — explicit marker wins, heuristic otherwise', async () => {
+    const root = el({
+      type: 'frame',
+      name: 'body',
+      rect: { x: 0, y: 0, width: 400, height: 300 },
+      children: [
+        el({ type: 'text', name: 'marked', text: 'a', rect: { x: 0, y: 0, width: 100, height: 100 }, style: { fontSize: 16 }, textAutoResize: 'NONE' }),
+        el({ type: 'text', name: 'single', text: 'b', rect: { x: 0, y: 0, width: 200, height: 40 }, style: { fontSize: 24, lineHeight: 32 } }),
+        el({ type: 'text', name: 'multi', text: 'c', rect: { x: 0, y: 0, width: 200, height: 200 }, style: { fontSize: 16, lineHeight: 24 } }),
+      ],
+    });
+    const ctx = makeCtx();
+    const plan = await buildImportCommands(ctx, specOf(root));
+    const byName = (n: string) => plan.commands.find((c) => c.params?.name === n)!;
+    expect(byName('marked').params?.textAutoResize).toBe('NONE');
+    expect(byName('single').params?.textAutoResize).toBe('WIDTH_AND_HEIGHT'); // 40/32 = 1.25 lines
+    expect(byName('multi').params?.textAutoResize).toBe('HEIGHT'); // 200/24 ≈ 8.3 lines
+  });
+
+  it('P2: canvas gradient becomes the main frame fill', async () => {
+    const spec = specOf(el({ type: 'frame', name: 'body', rect: { x: 0, y: 0, width: 400, height: 300 } }));
+    spec.canvas.background = undefined;
+    spec.canvas.backgroundImage = 'linear-gradient(180deg, #0d0d21 0%, #14102e 42%, #0d0e20 100%)';
+    const ctx = makeCtx();
+    const plan = await buildImportCommands(ctx, spec);
+    const main = plan.commands[0];
+    expect((main.params?.fills as any[])[0].type).toBe('GRADIENT_LINEAR');
+    expect((main.params?.fills as any[])[0].gradientStops).toHaveLength(3);
+  });
+
+  it('P0: rasterized svg assets (kind image, PNG data URL) insert as real images', async () => {
+    const root = el({
+      type: 'frame',
+      name: 'body',
+      rect: { x: 0, y: 0, width: 400, height: 300 },
+      children: [el({ type: 'image', name: 'chevron', rect: { x: 0, y: 0, width: 36, height: 22 }, assetId: 'a0' })],
+    });
+    const spec = specOf(root);
+    spec.assets = [
+      {
+        id: 'a0',
+        kind: 'image',
+        nodeIds: [],
+        url: `data:image/png;base64,${png1px.toString('base64')}`,
+        vectorUrl: 'data:image/svg+xml;utf8,%3Csvg%3E',
+        fileName: 'chevron.png',
+      },
+    ];
+    const ctx = makeCtx();
+    const plan = await buildImportCommands(ctx, spec);
+    expect(plan.commands.some((c) => c.command === 'insert_image' && c.params?.name === 'chevron')).toBe(true);
+    expect(plan.warnings).toEqual([]);
+    expect(plan.stats.images).toBe(1);
+  });
+});

@@ -290,3 +290,59 @@ describe('plugin code.ts — importer fix support', () => {
     expect(result2?.result.warning).toBeUndefined();
   });
 });
+
+describe('plugin code.ts — textAutoResize (P1)', () => {
+  it('create_text applies WIDTH_AND_HEIGHT and skips the fixed resize', async () => {
+    const figma = (globalThis as any).figma;
+    const msgs = await runCommand('ar1', 'create_text', {
+      characters: 'Midnight Drive',
+      fontName: { family: 'Inter', style: 'Bold' },
+      width: 378,
+      height: 60,
+      textAutoResize: 'WIDTH_AND_HEIGHT',
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+    expect(result?.ok).toBe(true);
+    const text = figma.currentPage.children.at(-1);
+    expect(text.textAutoResize).toBe('WIDTH_AND_HEIGHT');
+    expect(text.width).toBe(0); // no fixed resize ran
+  });
+
+  it('create_text HEIGHT keeps the fixed width, NONE keeps the fixed box', async () => {
+    const figma = (globalThis as any).figma;
+    await runCommand('ar2', 'create_text', {
+      characters: 'paragraph',
+      fontName: { family: 'Inter', style: 'Regular' },
+      width: 300,
+      height: 200,
+      textAutoResize: 'HEIGHT',
+    });
+    const para = figma.currentPage.children.at(-1);
+    expect(para.textAutoResize).toBe('HEIGHT');
+    expect(para.width).toBe(300);
+    await runCommand('ar3', 'create_text', {
+      characters: 'legacy',
+      fontName: { family: 'Inter', style: 'Regular' },
+      width: 100,
+      height: 50,
+      textAutoResize: 'NONE',
+    });
+    const legacy = figma.currentPage.children.at(-1);
+    expect(legacy.textAutoResize).toBe('NONE');
+    expect(legacy.width).toBe(100);
+    expect(legacy.height).toBe(50);
+  });
+
+  it('create_text without textAutoResize keeps the legacy fixed-box behavior', async () => {
+    const figma = (globalThis as any).figma;
+    await runCommand('ar4', 'create_text', {
+      characters: 'old spec',
+      fontName: { family: 'Inter', style: 'Regular' },
+      width: 120,
+      height: 40,
+    });
+    const text = figma.currentPage.children.at(-1);
+    expect(text.textAutoResize).toBe('NONE');
+    expect(text.width).toBe(120);
+  });
+});

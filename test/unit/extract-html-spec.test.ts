@@ -25,6 +25,7 @@ function raw(sections: RawDomNode[], extra: Partial<RawDomResult> = {}): RawDomR
     pageHeight: 1470,
     fonts: [],
     warnings: [],
+    pageBackground: { body: {}, html: {} },
     sections: sections.map((root) => ({ root })),
     ...extra,
   };
@@ -321,14 +322,102 @@ describe('extractHtmlToReplicaSpec (playwright, real C5 fixture)', () => {
     expect(artAsset.url).toContain('album-art.png');
     expect(artAsset.url!.startsWith('file://')).toBe(true); // relative src resolved
 
-    // inline SVGs captured as data-url assets
-    const svgs = flat.filter((e) => e.type === 'svg');
-    expect(svgs.length).toBeGreaterThanOrEqual(8);
-    expect(svgs.every((e) => spec.assets.find((a) => a.id === e.assetId)?.url?.startsWith('data:image/svg+xml'))).toBe(true);
+    // inline SVGs rasterized to transparent PNGs (2x), vector kept in vectorUrl
+    const rasterIcons = flat.filter((e) => e.type === 'image' && spec.assets.find((a) => a.id === e.assetId)?.vectorUrl);
+    expect(rasterIcons.length).toBeGreaterThanOrEqual(8);
+    for (const icon of rasterIcons) {
+      const asset = spec.assets.find((a) => a.id === icon.assetId)!;
+      expect(asset.kind).toBe('image');
+      expect(asset.url!.startsWith('data:image/png')).toBe(true);
+      expect(asset.vectorUrl!.startsWith('data:image/svg+xml')).toBe(true);
+    }
+    // no vector-only svg elements remain
+    expect(flat.filter((e) => e.type === 'svg')).toHaveLength(0);
 
     // play button circle
     const play = byName('play')!;
     expect(play.style.backgroundColor).toBe('#833ee9');
     expect(play.style.borderRadius).toBeGreaterThanOrEqual(80);
   }, 30000);
+});
+
+describe('P0/P1/P2 fixes (pure mapping)', () => {
+  it('P0: rasterized svg → image asset with PNG data URL + vectorUrl meta', () => {
+    const png = 'data:image/png;base64,iVBORw0KGgo=';
+    const png2 = 'data:image/png;base64,iVBORw0KGgoA=';
+    const spec = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({ tag: 'svg', className: 'chevron', svg: '<svg viewBox="0 0 1 1"></svg>', rasterPng: png }),
+            node({ tag: 'img', className: 'icon-file', src: 'file:///tmp/icon.svg', rasterPng: png2 }),
+          ],
+        }),
+      ]),
+    );
+    const [chevron, iconFile] = spec.sections[0].elements[0].children!;
+    expect(chevron.type).toBe('image');
+    const a1 = spec.assets.find((a) => a.id === chevron.assetId)!;
+    expect(a1.kind).toBe('image');
+    expect(a1.url).toBe(png);
+    expect(a1.vectorUrl!.startsWith('data:image/svg+xml')).toBe(true);
+    expect(iconFile.type).toBe('image');
+    const a2 = spec.assets.find((a) => a.id === iconFile.assetId)!;
+    expect(a2.url).toBe(png2);
+    expect(a2.vectorUrl).toBe('file:///tmp/icon.svg');
+  });
+
+  it('P0: non-rasterized svg keeps the legacy svg-element path', () => {
+    const spec = rawDomToReplicaSpec(
+      raw([node({ tag: 'body', style: {}, children: [node({ tag: 'svg', className: 'dots', svg: '<svg/>' })] })]),
+    );
+    const dots = spec.sections[0].elements[0].children![0];
+    expect(dots.type).toBe('svg');
+    expect(spec.assets.find((a) => a.id === dots.assetId)?.url!.startsWith('data:image/svg+xml')).toBe(true);
+  });
+
+  it('P1: single-line text gets WIDTH_AND_HEIGHT, multi-line gets HEIGHT, nowrap stays single', () => {
+    const spec = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({ tag: 'div', id: 'single', text: 'Midnight Drive', rect: { x: 0, y: 0, width: 380, height: 60 }, style: { fontSize: '55px', lineHeight: '60px', whiteSpace: 'normal' } }),
+            node({ tag: 'div', id: 'multi', text: 'A long paragraph that wraps onto multiple lines in the layout.', rect: { x: 0, y: 0, width: 300, height: 120 }, style: { fontSize: '20px', lineHeight: '28px', whiteSpace: 'normal' } }),
+            node({ tag: 'div', id: 'nowrap', text: 'no wrap', rect: { x: 0, y: 0, width: 200, height: 30 }, style: { fontSize: '20px', whiteSpace: 'nowrap' } }),
+          ],
+        }),
+      ]),
+    );
+    const [single, multi, nowrap] = spec.sections[0].elements[0].children!;
+    expect(single.textAutoResize).toBe('WIDTH_AND_HEIGHT');
+    expect(multi.textAutoResize).toBe('HEIGHT'); // 120/28 ≈ 4.3 lines
+    expect(nowrap.textAutoResize).toBe('WIDTH_AND_HEIGHT');
+  });
+
+  it('P2: html background paints the canvas when body is transparent', () => {
+    const spec = rawDomToReplicaSpec(
+      raw([node({ tag: 'body', style: { backgroundColor: 'rgba(0, 0, 0, 0)' } })], {
+        pageBackground: { body: { color: 'rgba(0, 0, 0, 0)', image: 'none' }, html: { color: 'rgb(13, 13, 20)', image: 'none' } },
+      }),
+    );
+    expect(spec.canvas.background).toBe('#0d0d14');
+  });
+
+  it('P2: body wins over html; gradients land in canvas.backgroundImage', () => {
+    const grad = 'linear-gradient(180deg, rgb(13, 13, 33) 0%, rgb(13, 14, 32) 100%)';
+    const spec = rawDomToReplicaSpec(
+      raw([node({ tag: 'body', style: { backgroundImage: grad } })], {
+        pageBackground: { body: { color: 'rgba(0, 0, 0, 0)', image: grad }, html: { color: 'rgb(255, 0, 0)', image: 'none' } },
+      }),
+    );
+    expect(spec.canvas.background).toBeUndefined(); // transparent base under the gradient
+    expect(spec.canvas.backgroundImage).toContain('linear-gradient');
+    expect(spec.canvas.background).not.toBe('#ff0000'); // html loses
+    // gradient stripped from the body section (moved to canvas)
+    expect(spec.sections[0].style.backgroundImage).toBeUndefined();
+  });
 });

@@ -100,6 +100,20 @@ function visualParams(style: SpecStyle, out: Record<string, unknown>) {
   if (style.opacity !== undefined) out.opacity = style.opacity;
 }
 
+/**
+ * Text auto-resize fallback for specs without an explicit marker (hand-written
+ * / figma-rest): estimate the line count from box height vs line height.
+ * Single-line → WIDTH_AND_HEIGHT (Figma sizes to content; fixed Chromium- or
+ * hand-measured widths wrap under Figma's slightly wider glyph metrics).
+ * Multi-line → HEIGHT (fixed width, wrapping preserved, height follows).
+ */
+export function textAutoResizeFor(el: ReplicaElement): 'WIDTH_AND_HEIGHT' | 'HEIGHT' | 'NONE' {
+  if (el.textAutoResize) return el.textAutoResize;
+  const fontSize = el.style.fontSize ?? 16;
+  const lh = typeof el.style.lineHeight === 'number' ? el.style.lineHeight : fontSize * 1.2;
+  return el.rect.height / lh < 1.6 ? 'WIDTH_AND_HEIGHT' : 'HEIGHT';
+}
+
 function textParams(el: ReplicaElement, rel: { x: number; y: number }, k: (n: number) => number) {
   const s = el.style;
   // Full 100–900 → Figma style-name mapping (fontFromStyle); explicit
@@ -115,6 +129,7 @@ function textParams(el: ReplicaElement, rel: { x: number; y: number }, k: (n: nu
     height: k(el.rect.height),
     fontSize: s.fontSize ?? 16,
     fontName,
+    textAutoResize: textAutoResizeFor(el),
     // Plugin tries these same-family styles (nearest weight first) before
     // falling back to Regular; degradations surface in result.warnings.
     fallbackStyles: fontFallbackChain(s.fontWeight).filter((st) => st !== fontName.style),
@@ -194,7 +209,13 @@ export async function buildImportCommands(
     clipsContent: true,
   };
   if (opts.parentId) mainParams.parentId = opts.parentId;
-  if (spec.canvas.background) mainParams.fills = [solidFill(spec.canvas.background)];
+  // Page background: gradient wins over solid (extractor keeps both when the
+  // CSS background is a gradient over a base color).
+  if (spec.canvas.backgroundImage?.includes('gradient')) {
+    const grad = parseLinearGradient(spec.canvas.backgroundImage);
+    if (grad) mainParams.fills = [linearGradientPaint(grad.stops, grad.angle)];
+  }
+  if (!mainParams.fills && spec.canvas.background) mainParams.fills = [solidFill(spec.canvas.background)];
   commands.push({ command: 'create_frame', params: mainParams, as: 'main' });
 
   const assetById = new Map(spec.assets.map((a) => [a.id, a]));
