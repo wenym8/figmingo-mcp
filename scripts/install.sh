@@ -52,6 +52,23 @@ else
 fi
 CMD="$(command -v figmingo-mcp || echo "npx figmingo-mcp")"
 
+# fnm users: `command -v` resolves into fnm's per-shell-session directory
+# (~/.local/state/fnm_multishells/<pid>/...), which fnm deletes when that
+# shell exits — an MCP config pointing there breaks permanently. Rewrite to
+# the stable node-versions installation of the same Node version.
+case "$CMD" in
+  *fnm_multishells*)
+    NODE_VER="$(node -p 'process.version' 2>/dev/null || true)"
+    STABLE="$HOME/.local/share/fnm/node-versions/$NODE_VER/installation/bin/$PKG"
+    if [ -n "$NODE_VER" ] && [ -x "$STABLE" ]; then
+      CMD="$STABLE"
+      info "fnm multishell path detected; using stable path: $CMD"
+    else
+      warn "fnm multishell path detected but no stable install found; re-run from a login shell or use npx"
+    fi
+    ;;
+esac
+
 # --- 3. Figma token ----------------------------------------------------------
 if [ -z "$TOKEN" ] && [ -n "${FIGMA_API_KEY:-}" ]; then TOKEN="$FIGMA_API_KEY"; fi
 # Reuse a token already written by a previous install (re-runs must not wipe it).
