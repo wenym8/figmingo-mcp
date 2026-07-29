@@ -99,7 +99,8 @@ if (-not $Token) {
     (Join-Path $HOME ".claude.json"),
     (Join-Path $env:APPDATA "Claude\claude_desktop_config.json"),
     (Join-Path $env:APPDATA "Code\User\mcp.json"),
-    (Join-Path $HOME ".kimi\mcp.json")
+    (Join-Path $HOME ".kimi\mcp.json"),
+    (Join-Path $HOME ".kimi-code\mcp.json")
   )
   foreach ($p in $inheritPaths) {
     if (Test-Path $p) {
@@ -202,7 +203,11 @@ foreach ($c in $Clients.Split(",")) {
     "claude-code"    { Write-Config "Claude Code" (Join-Path $HOME ".claude.json") }
     "claude-desktop" { Write-Config "Claude Desktop" (Join-Path $env:APPDATA "Claude\claude_desktop_config.json") }
     "vscode"         { Write-Config "VS Code" (Join-Path $env:APPDATA "Code\User\mcp.json") }
-    "kimi"           { Write-Config "Kimi CLI" (Join-Path $HOME ".kimi\mcp.json") }
+    "kimi"           {
+      # Kimi Code CLI reads ~/.kimi-code/mcp.json; older builds used ~/.kimi/mcp.json — write both.
+      Write-Config "Kimi CLI" (Join-Path $HOME ".kimi-code\mcp.json")
+      Write-Config "Kimi CLI (legacy)" (Join-Path $HOME ".kimi\mcp.json")
+    }
     "codex"          { Write-CodexConfig (Join-Path $HOME ".codex\config.toml") }
     default          { Warn "unknown client '$c' - skipped" }
   }

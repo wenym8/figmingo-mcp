@@ -110,7 +110,8 @@ if [ -z "$TOKEN" ]; then
     "$HOME/.config/Claude/claude_desktop_config.json" \
     "$HOME/Library/Application Support/Code/User/mcp.json" \
     "$HOME/.config/Code/User/mcp.json" \
-    "$HOME/.kimi/mcp.json"; do
+    "$HOME/.kimi/mcp.json" \
+    "$HOME/.kimi-code/mcp.json"; do
     [ -f "$cfg" ] || continue
     TOKEN="$(node -e 'try{const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(c?.mcpServers?.figmingo?.env?.FIGMA_API_KEY??"")}catch{}' "$cfg" 2>/dev/null || true)"
     if [ -n "$TOKEN" ]; then info "reused Figma token from $cfg"; break; fi
@@ -254,7 +255,10 @@ for c in "${WANT[@]}"; do
         Darwin) write_config "VS Code" "$HOME/Library/Application Support/Code/User/mcp.json" ;;
         *)      write_config "VS Code" "$HOME/.config/Code/User/mcp.json" ;;
       esac ;;
-    kimi)           write_config "Kimi CLI" "$HOME/.kimi/mcp.json" ;;
+    kimi)
+      # Kimi Code CLI reads ~/.kimi-code/mcp.json; older builds used ~/.kimi/mcp.json — write both.
+      write_config "Kimi CLI" "$HOME/.kimi-code/mcp.json"
+      write_config "Kimi CLI (legacy)" "$HOME/.kimi/mcp.json" ;;
     codex)          write_codex_config "$HOME/.codex/config.toml" ;;
     *) warn "unknown client '$c' — skipped" ;;
   esac
