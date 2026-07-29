@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/figmingo-mcp.svg)](https://www.npmjs.com/package/figmingo-mcp)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-176%20passed-brightgreen.svg)](#development)
+[![tests](https://img.shields.io/badge/tests-178%20passed-brightgreen.svg)](#development)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20streamable%20http-purple.svg)](https://modelcontextprotocol.io)
 
 **Local-first Figma MCP server.** Full read-side parity with the official Figma
@@ -268,7 +268,7 @@ re-measured from scratch — no self-reported numbers):
 ```bash
 npm install
 npm run build
-npm test            # 176 unit tests (vitest) with recorded fixtures
+npm test            # 178 unit tests (vitest) with recorded fixtures
 
 # live acceptance against the real API:
 FIGMA_API_KEY=<pat> TEST_FILE_KEY=<file-key> [TEST_NODE_ID=1:2] npm run accept
@@ -449,7 +449,7 @@ flowchart LR
 ```bash
 npm install
 npm run build
-npm test            # 176 个单元测试（vitest，录制 fixtures）
+npm test            # 178 个单元测试（vitest，录制 fixtures）
 
 # 真实 API 验收：
 FIGMA_API_KEY=<pat> TEST_FILE_KEY=<file-key> [TEST_NODE_ID=1:2] npm run accept

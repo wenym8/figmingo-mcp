@@ -9,7 +9,37 @@ import { allTools } from './tools';
 import type { ToolContext } from './tools/common';
 
 export const SERVER_NAME = 'figmingo-mcp';
-export const SERVER_VERSION = '0.1.0';
+export const SERVER_VERSION = '0.1.2';
+
+/**
+ * Server-level usage guidance, sent to the MCP client in the initialize
+ * handshake so any AI agent knows the intended workflows without reading the
+ * README. Keep it terse — tool descriptions carry the per-tool details.
+ */
+export const SERVER_INSTRUCTIONS = [
+  'figmingo-mcp: local-first Figma MCP. Read designs via REST (free plan OK),',
+  'rebuild HTML 1:1 in Figma via the companion plugin bridge.',
+  '',
+  'READ a design: pass a full figma.com URL (or fileKey) — node-id in the URL is honored.',
+  'Orient with get_metadata (cheap tree) first, then get_design_context for the node you need.',
+  'get_screenshot / download_assets for images; get_variable_defs degrades gracefully on free plans.',
+  '',
+  'HTML 1:1 REPLICA (recommended loop):',
+  '1. get_html_replica_spec on the target node → spec.',
+  '2. Write HTML/CSS from the spec.',
+  '3. verify_html_parity (three gates: content / structural ±4px / visual ≤1%) or',
+  '   compare_html_to_image for quick band-localized diffs; iterate until converged.',
+  '4. import_html_replica to write the result into Figma as native frames.',
+  '',
+  'WRITE to canvas: requires the companion plugin running in Figma desktop',
+  '(Plugins → Development → figmingo). Check bridge_status first.',
+  'Use execute_plugin_command (batch commands:[...] for multi-step builds) or',
+  'import_html_replica for HTML→Figma direct import (dryRun first to preview).',
+  'Batch timeouts: idle 20s resets on every heartbeat, total cap 5min — on timeout,',
+  'inspect the canvas with get_page_children before retrying; never blind-retry.',
+  '',
+  'Convergence: pixel diff <1% passes; <0.6% with mostly anti-alias pixels means stop.',
+].join('\n');
 
 export function createContext(config: AppConfig, bridge: PluginBridge): ToolContext {
   let client: FigmaRestClient | undefined;
@@ -32,7 +62,10 @@ export function createContext(config: AppConfig, bridge: PluginBridge): ToolCont
 }
 
 export function createMcpServer(ctx: ToolContext): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  const server = new McpServer(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
   for (const tool of allTools) {
     server.registerTool(
       tool.name,
