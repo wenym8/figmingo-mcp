@@ -74,7 +74,9 @@ tools), writes MCP config into
 **Codex CLI** (`~/.codex/config.toml`, TOML — only the
 `[mcp_servers.figmingo]` section is touched; the original is backed up to
 `config.toml.figmingo-bak`), copies the companion plugin (manifest + code.js +
-ui.html) to `~/.figmingo/plugin`, and prints next steps. Re-running is
+ui.html) to `~/.figmingo/plugin` **plus a `figmingo-plugin` shortcut on your
+Desktop** (so Figma's *Import plugin from manifest…* file picker is one click,
+no hidden-folder hunting), and prints next steps. Re-running is
 idempotent and never wipes a previously configured Figma token.
 
 After installing, run `figmingo-mcp doctor` to verify the whole environment
@@ -184,9 +186,10 @@ Everything brand-specific is parameterized via options:
 
 The companion plugin (`plugin/`) connects to the MCP server at
 `ws://127.0.0.1:39220`. Import once: **Figma desktop → Plugins → Development →
-Import plugin from manifest…** → select `~/.figmingo/plugin/manifest.json`
-(or `plugin/manifest.json` in this repo), then keep it running. Works on free
-plans — writes never touch the REST quota.
+Import plugin from manifest…** → pick **`figmingo-plugin/manifest.json` on your
+Desktop** (a shortcut the installer drops there; the canonical copy is
+`~/.figmingo/plugin/manifest.json`, or `plugin/manifest.json` in this repo),
+then keep it running. Works on free plans — writes never touch the REST quota.
 
 Architecture note: Figma's plugin sandbox (`code.js`) cannot open WebSockets,
 so the socket lives in the plugin's **UI iframe** (`ui.html`) and command
@@ -353,7 +356,7 @@ Windows（PowerShell）：
 iwr -useb https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.ps1 | iex
 ```
 
-安装器会：检测 Node ≥ 18 → 全局安装包 → 安装 Playwright Chromium（约 170MB，一次性，HTML 渲染/提取/对比工具需要）→ 写入 **Cursor**（`~/.cursor/mcp.json`）、**Claude Code**（`~/.claude.json`）、**Claude Desktop**、**VS Code**、**Kimi CLI**（`~/.kimi/mcp.json`）、**Codex CLI**（`~/.codex/config.toml`，TOML，只改 `[mcp_servers.figmingo]` 段，原文件备份为 `config.toml.figmingo-bak`）的 MCP 配置 → 把伴侣插件（manifest + code.js + ui.html）复制到 `~/.figmingo/plugin` → 打印后续指引。重复运行幂等，不会清掉已配置的 Figma token。
+安装器会：检测 Node ≥ 18 → 全局安装包 → 安装 Playwright Chromium（约 170MB，一次性，HTML 渲染/提取/对比工具需要）→ 写入 **Cursor**（`~/.cursor/mcp.json`）、**Claude Code**（`~/.claude.json`）、**Claude Desktop**、**VS Code**、**Kimi CLI**（`~/.kimi/mcp.json`）、**Codex CLI**（`~/.codex/config.toml`，TOML，只改 `[mcp_servers.figmingo]` 段，原文件备份为 `config.toml.figmingo-bak`）的 MCP 配置 → 把伴侣插件（manifest + code.js + ui.html）复制到 `~/.figmingo/plugin`，**并在桌面放一个 `figmingo-plugin` 快捷方式**（Figma 导入对话框里一点即中，不用翻隐藏文件夹）→ 打印后续指引。重复运行幂等，不会清掉已配置的 Figma token。
 
 装完运行 `figmingo-mcp doctor` 自检整个环境（Node、token 有效性、Chromium、插件文件与版本漂移、客户端配置项、桥端口）——每项打印 ✓/✗ 并附修复提示，全部通过时退出码才为 0。
 
@@ -400,7 +403,7 @@ LH_TOL  = 2        COLOR_TOL     = 2/255  VISUAL_MAX_RATIO = 0.01（裁切 ≤ 2
 
 **写入工具（伴侣插件桥）**：`bridge_status`（桥连接状态）· `execute_plugin_command`（14 种命令 + `commands: [...]` 批次，顺序执行，`$var` 节点引用，心跳超时机制）· `import_html_replica`（HTML 文件/URL 一键直导为原生 Figma frames，Chromium 提取布局与计算样式，`dryRun` 预览，降级进 `warnings`）。
 
-插件连接 `ws://127.0.0.1:39220`。导入一次：**Figma 桌面端 → 插件 → 开发 → Import plugin from manifest…** → 选 `~/.figmingo/plugin/manifest.json`，保持运行即可。免费套餐可用——写入不占用 REST 配额。
+插件连接 `ws://127.0.0.1:39220`。导入一次：**Figma 桌面端 → 插件 → 开发 → Import plugin from manifest…** → 选**桌面上的 `figmingo-plugin/manifest.json`**（安装器放的快捷方式；本体在 `~/.figmingo/plugin/manifest.json`），保持运行即可。免费套餐可用——写入不占用 REST 配额。
 
 架构说明：Figma 插件沙箱（code.js）无法开 WebSocket，所以连接由插件的 **UI iframe**（ui.html）持有，命令经 `postMessage` 在 iframe 与沙箱间转发。UI 有状态面板（● 已连接 / ○ 连接中 / ✕ 失败原因、服务器地址、已执行命令数）。
 

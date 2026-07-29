@@ -229,6 +229,23 @@ else
   warn "could not locate bundled plugin; copy plugin/ from the npm package manually"
 fi
 
+# --- 5a. Easy-to-find symlink for the Figma import dialog --------------------
+# ~/.figmingo is hidden and painful to navigate to in Figma's "Import plugin
+# from manifest…" file picker. Drop a symlink on the Desktop (fallback: $HOME)
+# so the user can just click it. The canonical copy stays in $PLUGIN_DIR
+# (doctor checks that path); the symlink is a pure convenience.
+PLUGIN_LINK=""
+for base in "$HOME/Desktop" "$HOME"; do
+  if [ -d "$base" ]; then
+    PLUGIN_LINK="$base/figmingo-plugin"
+    break
+  fi
+done
+if [ -n "$PLUGIN_LINK" ] && [ -f "$PLUGIN_DIR/manifest.json" ]; then
+  ln -sfn "$PLUGIN_DIR" "$PLUGIN_LINK"
+  info "plugin shortcut → $PLUGIN_LINK"
+fi
+
 # --- 5b. Playwright Chromium (HTML render/extract/compare) -------------------
 # `npm install -g` fetches the playwright package but NOT its ~170MB browser.
 # Locate the playwright CLI inside the installed package (global first, then
@@ -265,7 +282,9 @@ Next steps:
      The MCP server starts automatically via: $CMD
   3. (Write tools) In Figma desktop:
        Plugins → Development → Import plugin from manifest…
-       → select $PLUGIN_DIR/manifest.json
+       → pick ${PLUGIN_LINK:-$PLUGIN_DIR}/manifest.json
+         (the figmingo-plugin folder on your Desktop links there;
+          in the file dialog you can also press ⌘⇧G and paste the path)
        → run "figmingo" from Plugins → Development while using write tools.
   4. Verify the environment:  $CMD doctor
   5. Verify end-to-end: ask your AI client to call the "whoami" tool.
