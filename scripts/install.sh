@@ -219,7 +219,7 @@ mkdir -p "$PLUGIN_DIR"
 SRC=""
 for cand in \
   "$(npm root -g 2>/dev/null)/$PKG/plugin" \
-  "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/plugin"; do
+  "$(cd "$(dirname "${BASH_SOURCE[0]:-}")/.." 2>/dev/null && pwd)/plugin"; do
   if [ -n "$cand" ] && [ -f "$cand/manifest.json" ]; then SRC="$cand"; break; fi
 done
 if [ -n "$SRC" ]; then
@@ -237,7 +237,7 @@ fi
 PW_CLI=""
 for cand in \
   "$(npm root -g 2>/dev/null)/$PKG/node_modules/.bin/playwright" \
-  "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/node_modules/.bin/playwright"; do
+  "$(cd "$(dirname "${BASH_SOURCE[0]:-}")/.." 2>/dev/null && pwd)/node_modules/.bin/playwright"; do
   if [ -n "$cand" ] && [ -x "$cand" ]; then PW_CLI="$cand"; break; fi
 done
 if [ -n "$PW_CLI" ]; then
