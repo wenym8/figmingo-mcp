@@ -421,3 +421,238 @@ describe('P0/P1/P2 fixes (pure mapping)', () => {
     expect(spec.sections[0].style.backgroundImage).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Optimization round: tracker/broken/tiny img filtering, rasterizeRaster,
+// styled runs, hidden pruning, container collapse, extraction cache.
+// ---------------------------------------------------------------------------
+
+describe('container collapsing (pure mapping)', () => {
+  it('merges style-less single-child container chains and drops empty style-less leaves', () => {
+    const spec = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({
+              tag: 'div',
+              className: 'outer',
+              style: {},
+              children: [
+                node({
+                  tag: 'div',
+                  className: 'inner',
+                  style: {},
+                  children: [node({ tag: 'div', className: 'card', style: { backgroundColor: 'rgb(10,10,10)' } })],
+                }),
+              ],
+            }),
+            node({ tag: 'div', className: 'ghost', style: {} }),
+          ],
+        }),
+      ]),
+    );
+    const kids = spec.sections[0].elements[0].children!;
+    // outer/inner collapsed into card; ghost dropped entirely.
+    expect(kids).toHaveLength(1);
+    expect(kids[0].name).toBe('card');
+    expect(kids[0].style.backgroundColor).toBe('#0a0a0a');
+  });
+
+  it('clipping flags survive the merge', () => {
+    const spec = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({
+              tag: 'div',
+              className: 'clipper',
+              overflow: 'hidden',
+              style: {},
+              children: [node({ tag: 'div', className: 'card', style: { backgroundColor: 'rgb(1,1,1)' } })],
+            }),
+          ],
+        }),
+      ]),
+    );
+    const card = spec.sections[0].elements[0].children![0];
+    expect(card.name).toBe('card');
+    expect(card.clipsContent).toBe(true);
+  });
+
+  it('collapseContainers:false preserves the legacy tree', () => {
+    const spec = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [node({ tag: 'div', className: 'ghost', style: {} })],
+        }),
+      ]),
+      { collapseContainers: false },
+    );
+    expect(spec.sections[0].elements[0].children).toHaveLength(1);
+  });
+});
+
+describe('styled runs mapping (pure)', () => {
+  it('maps raw runs to spec runs and drops them when uniform with the base style', () => {
+    const withRuns = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({
+              tag: 'p',
+              text: 'Hello bold world',
+              style: { color: 'rgb(255,255,255)', fontFamily: 'Inter', fontWeight: '400', fontSize: '16px' },
+              runs: [
+                { text: 'Hello ', style: { color: 'rgb(255,255,255)', fontFamily: 'Inter', fontWeight: '400' } },
+                { text: 'bold', style: { color: 'rgb(255,255,255)', fontFamily: 'Inter', fontWeight: '700' } },
+                { text: ' world', style: { color: 'rgb(255,0,0)', fontFamily: 'Inter', fontWeight: '400' } },
+              ],
+            }),
+          ],
+        }),
+      ]),
+    );
+    const text = withRuns.sections[0].elements[0].children![0];
+    expect(text.type).toBe('text');
+    expect(text.runs).toHaveLength(3);
+    expect(text.runs![1].fontWeight).toBe(700);
+    expect(text.runs![2].color).toBe('#ff0000');
+    expect(text.text).toBe('Hello bold world');
+
+    const uniform = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({
+              tag: 'p',
+              text: 'all same',
+              style: { color: 'rgb(255,255,255)', fontFamily: 'Inter', fontWeight: '400', fontSize: '16px' },
+              runs: [
+                { text: 'all ', style: { color: 'rgb(255,255,255)', fontFamily: 'Inter', fontWeight: '400' } },
+                { text: 'same', style: { color: 'rgb(255,255,255)', fontFamily: 'Inter', fontWeight: '400' } },
+              ],
+            }),
+          ],
+        }),
+      ]),
+    );
+    expect(uniform.sections[0].elements[0].children![0].runs).toBeUndefined();
+  });
+});
+
+describe('extractHtmlToReplicaSpec — optimization round (playwright, inline html)', () => {
+  const PNG_1PX =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const WEBP_1PX = 'data:image/webp;base64,UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA';
+
+  const flatOf = (spec: any) => {
+    const flat: any[] = [];
+    const visit = (el: any) => {
+      flat.push(el);
+      el.children?.forEach(visit);
+    };
+    spec.sections.forEach((s: any) => s.elements.forEach(visit));
+    return flat;
+  };
+
+  it('skips tracker hosts, broken images and 1×1 tracking pixels; keeps scaled 1px images', async () => {
+    const html = `<html><body style="margin:0">
+      <img src="https://doubleclick.net/ad/x.png" width="10" height="10" alt="">
+      <img src="https://definitely.invalid/nowhere.png" width="10" height="10" alt="">
+      <img src="${PNG_1PX}" width="1" height="1" alt="">
+      <img id="big" src="${PNG_1PX}" width="100" height="100" alt="">
+    </body></html>`;
+    const { spec, warnings } = await extractHtmlToReplicaSpec({ html, cache: false });
+    const images = flatOf(spec).filter((e) => e.type === 'image');
+    expect(images).toHaveLength(1);
+    expect(images[0].rect.width).toBe(100);
+    // tracker dropped silently; the broken one warns exactly once.
+    expect(warnings.filter((w) => w.includes('img failed to load'))).toHaveLength(1);
+    expect(warnings.some((w) => w.includes('doubleclick'))).toBe(false);
+  }, 30000);
+
+  it('prunes elements fully clipped by an overflow ancestor; includeHidden keeps them', async () => {
+    const html = `<html><body style="margin:0">
+      <div style="overflow:hidden;width:100px;height:100px">
+        <div id="visible-slide" style="width:100px;height:100px;background:#111"></div>
+        <div id="hidden-slide" style="width:100px;height:100px;background:#222;margin-left:500px"></div>
+      </div>
+    </body></html>`;
+    const pruned = await extractHtmlToReplicaSpec({ html, cache: false });
+    const names = flatOf(pruned.spec).map((e) => e.name);
+    expect(names).toContain('visible-slide');
+    expect(names).not.toContain('hidden-slide');
+
+    const kept = await extractHtmlToReplicaSpec({ html, includeHidden: true, cache: false });
+    expect(flatOf(kept.spec).map((e) => e.name)).toContain('hidden-slide');
+  }, 30000);
+
+  it('rasterizeRaster: webp <img> becomes a 2x PNG asset with originalUrl fallback', async () => {
+    const html = `<html><body style="margin:0">
+      <img src="${WEBP_1PX}" style="width:120px;height:80px" alt="">
+    </body></html>`;
+    const { spec } = await extractHtmlToReplicaSpec({ html, cache: false });
+    const images = flatOf(spec).filter((e) => e.type === 'image');
+    expect(images).toHaveLength(1);
+    const asset = spec.assets.find((a: any) => a.id === images[0].assetId)!;
+    expect(asset.url.startsWith('data:image/png')).toBe(true);
+    expect(asset.originalUrl).toBe(WEBP_1PX);
+
+    const off = await extractHtmlToReplicaSpec({ html, rasterizeRaster: false, cache: false });
+    const offImages = flatOf(off.spec).filter((e) => e.type === 'image');
+    const offAsset = off.spec.assets.find((a: any) => a.id === offImages[0].assetId)!;
+    expect(offAsset.url).toBe(WEBP_1PX);
+    expect(offAsset.originalUrl).toBeUndefined();
+  }, 30000);
+
+  it('styled runs: inline formatting children merge into one text element with styled runs', async () => {
+    const html = `<html><body style="margin:0">
+      <p style="font-family:sans-serif;font-size:20px;color:#ffffff;margin:0">
+        Price <strong style="font-weight:700">$12</strong> <a href="#" style="color:#ff0000">buy now</a>
+      </p>
+    </body></html>`;
+    const { spec } = await extractHtmlToReplicaSpec({ html, cache: false });
+    const texts = flatOf(spec).filter((e) => e.type === 'text');
+    expect(texts).toHaveLength(1);
+    const t = texts[0];
+    expect(t.runs?.length).toBeGreaterThanOrEqual(3);
+    // run-boundary whitespace preserved (no collapse across runs)
+    expect(t.text).toContain('Price ');
+    expect(t.text).toContain(' buy now');
+    const bold = t.runs.find((r: any) => r.text.includes('$12'))!;
+    expect(bold.fontWeight).toBe(700);
+    const link = t.runs.find((r: any) => r.text.includes('buy now'))!;
+    expect(link.color).toBe('#ff0000');
+    // block coordinates come from the element rect
+    expect(t.rect.width).toBeGreaterThan(0);
+  }, 30000);
+
+  it('extraction cache: a second identical call is served from memory', async () => {
+    const html = '<html><body><p>cache me</p></body></html>';
+    const file = path.join(__dirname, '..', 'fixtures', 'extract-cache-tmp.html');
+    const fs = await import('node:fs');
+    fs.writeFileSync(file, html);
+    try {
+      const a = await extractHtmlToReplicaSpec({ htmlPath: file });
+      const b = await extractHtmlToReplicaSpec({ htmlPath: file });
+      expect(b).toBe(a); // same object → cache hit
+      const { clearExtractHtmlCache } = await import('../../src/replica/extractHtmlSpec');
+      clearExtractHtmlCache();
+      const c = await extractHtmlToReplicaSpec({ htmlPath: file });
+      expect(c).not.toBe(a);
+      expect(c.spec.canvas.width).toBe(a.spec.canvas.width);
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
+  }, 60000);
+});

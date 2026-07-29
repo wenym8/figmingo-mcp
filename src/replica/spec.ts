@@ -40,6 +40,21 @@ export interface SpecStyle {
 
 export type ReplicaElementType = 'text' | 'image' | 'svg' | 'frame' | 'button' | 'input';
 
+/**
+ * One styled run inside a merged inline-formatting text element (a sentence
+ * with a bold word / a link / a differently-colored span). `text` keeps its
+ * original inter-run whitespace (no whitespace collapse across run boundaries).
+ * Missing fields inherit the element-level style.
+ */
+export interface SpecTextRun {
+  text: string;
+  fontFamily?: string;
+  fontWeight?: number;
+  fontStyleName?: string;
+  color?: string;
+  colorAlpha?: number;
+}
+
 export interface ReplicaElement {
   key: string; // path of node ids from section root
   nodeId: string;
@@ -67,6 +82,12 @@ export interface ReplicaElement {
    * import exactly as before.
    */
   children?: ReplicaElement[];
+  /**
+   * Styled runs for merged inline-formatting text (produced by the HTML
+   * extractor). When present the importer emits create_text `runs` params so
+   * the plugin applies per-range fonts/fills instead of one node-wide font.
+   */
+  runs?: SpecTextRun[];
 }
 
 export interface ReplicaSection {
@@ -88,6 +109,8 @@ export interface ReplicaAsset {
   url?: string;
   /** Original vector source (data:image/svg+xml or file/http URL) when `url` is a rasterized PNG of an SVG. */
   vectorUrl?: string;
+  /** Original source URL when `url` is an extraction-side rasterized PNG copy of a raster image (webp/avif/…). */
+  originalUrl?: string;
   scaleMode?: string;
   fileName: string;
   width?: number;

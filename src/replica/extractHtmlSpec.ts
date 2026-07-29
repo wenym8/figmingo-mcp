@@ -34,6 +34,17 @@
  *  - leaf with background-image: url(...) → type 'image' with that URL.
  *  - hidden elements (display:none, visibility:hidden/collapse, opacity:0,
  *    zero-size) are skipped, along with script/style/noscript/template/head.
+ *    Broken <img>s, 1×1 tracking pixels, tracker hosts (DEFAULT_TRACKER_HOST_PATTERN),
+ *    and — unless includeHidden — elements fully clipped by an overflow
+ *    ancestor or entirely off-canvas (hidden carousel slides) are also pruned.
+ *  - createImage-incompatible raster formats (webp/avif/heic/…) are rasterized
+ *    in-page to 2x PNGs (canvas drawImage); the original URL is kept in
+ *    asset.originalUrl as the importer's fallback.
+ *  - elements whose subtree is pure inline formatting (span/b/strong/a/em/…)
+ *    merge into ONE text element with styled `runs` (per-run font/weight/color;
+ *    run-boundary whitespace preserved). Style-less single-child container
+ *    chains collapse and style-less empty leaf frames are dropped
+ *    (collapseContainers, default on).
  *
  * Style mapping (computed CSS → SpecStyle):
  *  - color/backgroundColor      → hex + alpha (transparent backgrounds omitted)
@@ -68,10 +79,11 @@
  * spec.metadata.options.webfonts for downstream font mapping.
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { launchBrowser, openPage, type RenderOptions, type Viewport } from './render';
 import { parseCssColor } from './css';
-import type { ReplicaAsset, ReplicaElement, ReplicaSection, ReplicaSpec, SpecStyle } from './spec';
+import type { ReplicaAsset, ReplicaElement, ReplicaSection, ReplicaSpec, SpecStyle, SpecTextRun } from './spec';
 
 export interface ExtractHtmlSpecOptions extends RenderOptions {
   /** CSS selector for the replica root (default 'body'). */
@@ -82,9 +94,31 @@ export interface ExtractHtmlSpecOptions extends RenderOptions {
   name?: string;
   /** Rasterize inline <svg> and <img src="*.svg"> to transparent PNGs (default true). */
   rasterizeSvg?: boolean;
+  /** Rasterize raster images figma.createImage can't ingest (webp/avif/heic/…) to 2x PNGs (default true). */
+  rasterizeRaster?: boolean;
   /** Raster scale factor vs display size (default 2, retina). */
   rasterScale?: number;
+  /**
+   * Keep elements that are off-canvas or fully clipped by an overflow:hidden
+   * ancestor (e.g. hidden carousel slides). Default false: they are pruned.
+   * display:none / visibility:hidden / opacity:0 are always skipped.
+   */
+  includeHidden?: boolean;
+  /**
+   * Regex source matched against an <img>'s hostname; matches are dropped as
+   * trackers (default: DEFAULT_TRACKER_HOST_PATTERN). Pass null to disable.
+   */
+  trackerPattern?: string | null;
+  /** Process-local extraction cache (5 min TTL, keyed by url or htmlPath+mtime+viewport). Default true. */
+  cache?: boolean;
 }
+
+/**
+ * Default tracker/analytics host filter (item: skip tracker pixels). Hostname
+ * regex source; override via ExtractHtmlSpecOptions.trackerPattern.
+ */
+export const DEFAULT_TRACKER_HOST_PATTERN =
+  '(^|\\.)doubleclick\\.net$|(^|\\.)bat\\.bing\\.com$|(^|\\.)analytics\\.twitter\\.com$|(^|\\.)fls\\.[a-z.]+|\\.fls\\.|(^|\\.)google-analytics\\.com$|(^|\\.)googletagmanager\\.com$|(^|\\.)connect\\.facebook\\.net$|(^|\\.)facebook\\.com$|(^|\\.)pixel\\.[^.]+\\.|(^|\\.)beacon\\.[^.]+\\.';
 
 export interface ExtractHtmlSpecResult {
   spec: ReplicaSpec;
@@ -94,6 +128,18 @@ export interface ExtractHtmlSpecResult {
 // ---------------------------------------------------------------------------
 // Raw DOM tree (produced inside the page, JSON-serializable)
 // ---------------------------------------------------------------------------
+
+export interface RawTextRun {
+  /** Run text; internal whitespace collapsed to single spaces, boundary spaces preserved. */
+  text: string;
+  style: {
+    color?: string;
+    fontFamily?: string;
+    fontWeight?: string;
+    fontStyle?: string;
+    fontSize?: string;
+  };
+}
 
 export interface RawDomNode {
   tag: string;
@@ -106,8 +152,12 @@ export interface RawDomNode {
   svg?: string;
   /** Rasterized PNG data URL (2x) for SVG content — inline <svg> and <img src="*.svg">. */
   rasterPng?: string;
+  /** What rasterPng was produced from: svg content or a createImage-incompatible raster (webp/avif/…). */
+  rasterSource?: 'svg' | 'svg-img' | 'raster-img';
   imgBroken?: boolean;
   overflow?: string;
+  /** Merged styled runs for pure inline-formatting text blocks (span/b/strong/a/em/…). */
+  runs?: RawTextRun[];
   style: {
     color?: string;
     backgroundColor?: string;
@@ -159,7 +209,10 @@ async function extractRawDom(
       rootSelector: opts.rootSelector ?? 'body',
       sectionSelector: opts.sectionSelector ?? null,
       rasterizeSvg: opts.rasterizeSvg !== false,
+      rasterizeRaster: opts.rasterizeRaster !== false,
       rasterScale: opts.rasterScale ?? 2,
+      includeHidden: opts.includeHidden === true,
+      trackerPattern: opts.trackerPattern === null ? null : (opts.trackerPattern ?? DEFAULT_TRACKER_HOST_PATTERN),
     };
     const raw = await page.evaluate(async (p) => {
       const warnings: string[] = [];
@@ -174,8 +227,69 @@ async function extractRawDom(
         );
       }
       const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'template', 'head', 'meta', 'link', 'title', 'br']);
-      // Elements whose vector content should be rasterized to PNG (retina).
-      const rasterQueue: Array<{ node: Record<string, unknown>; el: Element; kind: 'svg' | 'svg-img' }> = [];
+      // Elements whose content should be rasterized to PNG (retina).
+      const rasterQueue: Array<{ node: Record<string, unknown>; el: Element; kind: 'svg' | 'svg-img' | 'raster-img' }> = [];
+      const trackerRe = p.trackerPattern ? new RegExp(p.trackerPattern, 'i') : null;
+      // Raster formats figma.createImage cannot ingest → extraction-side canvas rasterization.
+      const NON_CREATEIMAGE_RE = /\.(webp|avif|heic|heif|jxl|bmp|tiff?|ico)(\?|#|$)|^data:image\/(webp|avif|heic|heif|jxl|bmp|tiff|x-icon|vnd\.microsoft\.icon)/i;
+      // Inline formatting tags: an element whose subtree consists only of these
+      // (plus text) merges into ONE text element with styled runs.
+      const INLINE_FMT = new Set([
+        'span', 'b', 'strong', 'a', 'em', 'i', 'u', 's', 'strike', 'small', 'mark', 'abbr',
+        'cite', 'code', 'q', 'sub', 'sup', 'font', 'time', 'data', 'del', 'ins', 'kbd', 'samp', 'var', 'dfn', 'bdi', 'bdo',
+      ]);
+
+      function hostOf(url: string): string {
+        try {
+          return new URL(url, document.baseURI).hostname;
+        } catch {
+          return '';
+        }
+      }
+
+      function isInlineTree(el: Element): boolean {
+        for (const child of Array.from(el.children)) {
+          if (!INLINE_FMT.has(child.tagName.toLowerCase())) return false;
+          if (!isInlineTree(child)) return false;
+        }
+        return true;
+      }
+
+      /** DFS over text nodes; each run carries the computed style of its deepest inline element. */
+      function collectRuns(el: Element, out: Array<{ text: string; style: Record<string, string> }>) {
+        el.childNodes.forEach((n) => {
+          if (n.nodeType === 3) {
+            const t = (n.nodeValue ?? '').replace(/\s+/g, ' ');
+            if (!t) return;
+            const cs = getComputedStyle(el);
+            out.push({
+              text: t,
+              style: { color: cs.color, fontFamily: cs.fontFamily, fontWeight: cs.fontWeight, fontStyle: cs.fontStyle, fontSize: cs.fontSize },
+            });
+          } else if (n.nodeType === 1) {
+            const child = n as Element;
+            const cs = getComputedStyle(child);
+            if (cs.display === 'none' || cs.visibility === 'hidden') return;
+            collectRuns(child, out);
+          }
+        });
+      }
+
+      /** Merge adjacent runs with identical styles; trim boundary whitespace; drop empties. */
+      function normalizeRuns(runs: Array<{ text: string; style: Record<string, string> }>) {
+        const sig = (s: Record<string, string>) => [s.color, s.fontFamily, s.fontWeight, s.fontStyle, s.fontSize].join('|');
+        const merged: Array<{ text: string; style: Record<string, string> }> = [];
+        for (const r of runs) {
+          const last = merged[merged.length - 1];
+          if (last && sig(last.style) === sig(r.style)) last.text += r.text;
+          else merged.push({ ...r });
+        }
+        if (merged.length) {
+          merged[0].text = merged[0].text.replace(/^\s+/, '');
+          merged[merged.length - 1].text = merged[merged.length - 1].text.replace(/\s+$/, '');
+        }
+        return merged.filter((r) => r.text.length > 0);
+      }
 
       function rectOf(el: Element) {
         const r = el.getBoundingClientRect();
@@ -195,7 +309,11 @@ async function extractRawDom(
         return t.replace(/\s+/g, ' ').trim();
       }
 
-      function walk(el: Element): unknown | null {
+      function intersects(a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) {
+        return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+      }
+
+      function walk(el: Element, clip: { x: number; y: number; width: number; height: number } | null): unknown | null {
         const tag = el.tagName.toLowerCase();
         if (SKIP_TAGS.has(tag)) return null;
         const cs = getComputedStyle(el);
@@ -203,15 +321,49 @@ async function extractRawDom(
         if (parseFloat(cs.opacity) === 0) return null;
         if ((el as HTMLElement).hasAttribute?.('data-figmingo-hidden')) return null;
         const rect = rectOf(el);
-        const children: unknown[] = [];
-        for (const child of Array.from(el.children)) {
-          const c = walk(child);
-          if (c) children.push(c);
+        if (!p.includeHidden) {
+          // Fully clipped by an overflow:hidden/scroll/auto ancestor (hidden
+          // carousel slides) or off-canvas entirely — contributes nothing.
+          if (clip && !intersects(rect, clip)) return null;
+          const vw = window.innerWidth;
+          if (rect.x + rect.width < 0 || rect.x > vw || rect.y + rect.height < 0) return null;
         }
-        const text = ownText(el);
+        // An overflow-clipping ancestor narrows the clip box for its descendants.
+        let childClip = clip;
+        if (/(hidden|scroll|auto|clip)/.test(`${cs.overflow} ${cs.overflowX} ${cs.overflowY}`)) {
+          childClip = clip && !intersects(clip, rect) ? clip : clip ? {
+            x: Math.max(clip.x, rect.x),
+            y: Math.max(clip.y, rect.y),
+            width: Math.min(clip.x + clip.width, rect.x + rect.width) - Math.max(clip.x, rect.x),
+            height: Math.min(clip.y + clip.height, rect.y + rect.height) - Math.max(clip.y, rect.y),
+          } : rect;
+        }
+        // Merged styled-runs path: element whose element children are ALL inline
+        // formatting tags (span/b/strong/a/em/…) collapses into one text block.
+        const mergeRuns = el.children.length > 0 && tag !== 'img' && tag !== 'svg' && isInlineTree(el);
+        const children: unknown[] = [];
+        let runs: Array<{ text: string; style: Record<string, string> }> | undefined;
+        let text = '';
+        if (mergeRuns) {
+          const raw: Array<{ text: string; style: Record<string, string> }> = [];
+          collectRuns(el, raw);
+          const merged = normalizeRuns(raw);
+          if (merged.length >= 2) {
+            runs = merged;
+            text = merged.map((r) => r.text).join('');
+          } else {
+            text = merged.map((r) => r.text).join('').replace(/\s+/g, ' ').trim();
+          }
+        } else {
+          for (const child of Array.from(el.children)) {
+            const c = walk(child, childClip);
+            if (c) children.push(c);
+          }
+          text = ownText(el);
+        }
         if (rect.width < 1 || rect.height < 1) {
           // Zero-size elements only survive if they carry visible descendants.
-          if (!children.length) return null;
+          if (!children.length && !text) return null;
         }
         const node: Record<string, unknown> = {
           tag,
@@ -221,6 +373,7 @@ async function extractRawDom(
           className: el.getAttribute('class') || undefined,
           rect,
           text: text || undefined,
+          runs,
           overflow: cs.overflow,
           style: {
             color: cs.color,
@@ -246,17 +399,32 @@ async function extractRawDom(
         };
         if (tag === 'img') {
           const img = el as HTMLImageElement;
-          node.src = img.currentSrc || img.src || undefined;
+          const src = img.currentSrc || img.src || '';
+          // Tracker hosts are dropped before anything else (deterministic even
+          // when the request itself fails offline).
+          if (trackerRe && trackerRe.test(hostOf(src))) return null; // tracker host
+          // Broken images and tracker pixels produce no element at all.
           if (!img.complete || img.naturalWidth === 0) {
             node.imgBroken = true;
-            warnings.push(`img failed to load: ${node.src ?? '(no src)'}`);
-          } else if (p.rasterizeSvg && /\.svg(\?|#|$)/i.test(String(node.src ?? ''))) {
+            warnings.push(`img failed to load: ${src || '(no src)'}`);
+            return null;
+          }
+          if (img.naturalWidth < 2 && img.naturalHeight < 2 && rect.width < 2 && rect.height < 2) return null; // tracking pixel (1×1, displayed 1×1)
+          node.src = src || undefined;
+          if (p.rasterizeSvg && /\.svg(\?|#|$)/i.test(src)) {
             rasterQueue.push({ node, el, kind: 'svg-img' });
+            node.rasterSource = 'svg-img';
+          } else if (p.rasterizeRaster && NON_CREATEIMAGE_RE.test(src)) {
+            rasterQueue.push({ node, el, kind: 'raster-img' });
+            node.rasterSource = 'raster-img';
           }
         }
         if (tag === 'svg') {
           node.svg = el.outerHTML;
-          if (p.rasterizeSvg) rasterQueue.push({ node, el, kind: 'svg' });
+          if (p.rasterizeSvg) {
+            rasterQueue.push({ node, el, kind: 'svg' });
+            node.rasterSource = 'svg';
+          }
         }
         return node;
       }
@@ -305,19 +473,18 @@ async function extractRawDom(
 
       const sections = sectionRoots
         .map((root) => {
-          const r = walk(root);
+          const r = walk(root, null);
           return r ? { root: r } : null;
         })
         .filter(Boolean);
 
-      // Rasterize queued SVG content (2x, transparent PNG). Failures keep the
-      // vector asset and degrade to the importer's placeholder + warning path.
+      // Rasterize queued content (2x, transparent PNG). Failures keep the
+      // original asset and degrade to the importer's fallback chain + warning.
       for (const item of rasterQueue) {
         try {
           const r = item.node.rect as { width: number; height: number };
-          const markup = item.kind === 'svg' ? String(item.node.svg ?? '') : '';
-          if (item.kind === 'svg-img') {
-            // <img src="*.svg">: draw the already-loaded bitmap directly.
+          if (item.kind === 'svg-img' || item.kind === 'raster-img') {
+            // <img> content: draw the already-loaded bitmap directly.
             const img = item.el as HTMLImageElement;
             const w = Math.max(1, Math.round(r.width * p.rasterScale));
             const h = Math.max(1, Math.round(r.height * p.rasterScale));
@@ -326,12 +493,13 @@ async function extractRawDom(
             canvas.height = h;
             canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
             item.node.rasterPng = canvas.toDataURL('image/png');
-          } else if (markup) {
-            item.node.rasterPng = await rasterizeMarkup(markup, r.width, r.height, p.rasterScale);
+          } else {
+            const markup = String(item.node.svg ?? '');
+            if (markup) item.node.rasterPng = await rasterizeMarkup(markup, r.width, r.height, p.rasterScale);
           }
         } catch (err) {
           warnings.push(
-            `svg rasterize failed for "${item.node.id ?? item.node.className ?? item.kind}": ${(err as Error).message}`,
+            `rasterize failed for "${item.node.id ?? item.node.className ?? item.kind}": ${(err as Error).message}`,
           );
         }
       }
@@ -428,6 +596,56 @@ function imageUrlFromBackground(v: string | undefined): string | undefined {
 export interface DomToSpecOptions {
   name?: string;
   warnings?: string[];
+  /**
+   * Collapse style-less single-child container chains into their child and
+   * drop style-less empty leaf frames (default true). Section roots are never
+   * collapsed away.
+   */
+  collapseContainers?: boolean;
+}
+
+/** Visual-style check shared by container collapsing. */
+function hasVisualStyle(style: SpecStyle): boolean {
+  return (
+    style.backgroundColor !== undefined ||
+    style.backgroundImage !== undefined ||
+    style.border !== undefined ||
+    style.boxShadow !== undefined ||
+    style.borderRadius !== undefined ||
+    (style.opacity !== undefined && style.opacity < 1)
+  );
+}
+
+/**
+ * Post-pass over the element tree: merge a style-less frame that wraps exactly
+ * one frame child into that child (chains collapse transitively), and drop
+ * style-less leaf frames with no content. Clipping flags survive the merge.
+ */
+export function collapseReplicaContainers(root: ReplicaElement): ReplicaElement {
+  const visit = (el: ReplicaElement): ReplicaElement | null => {
+    if (el.type !== 'frame') return el;
+    if (el.children) el.children = el.children.map(visit).filter((c): c is ReplicaElement => c !== null);
+    if (!el.children?.length) {
+      // Empty style-less leaf frame: dropped (unless it carries text — a label).
+      return !el.text && !hasVisualStyle(el.style) ? null : el;
+    }
+    let out = el;
+    while (
+      out.type === 'frame' &&
+      !out.text &&
+      !hasVisualStyle(out.style) &&
+      out.children?.length === 1 &&
+      out.children[0].type === 'frame'
+    ) {
+      const child = out.children[0];
+      child.clipsContent = child.clipsContent || out.clipsContent;
+      child.key = out.key; // keep the outer (shallower) key for stable paths
+      out = child;
+    }
+    return out;
+  };
+  if (root.children) root.children = root.children.map(visit).filter((c): c is ReplicaElement => c !== null);
+  return root;
 }
 
 export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = {}): ReplicaSpec {
@@ -530,6 +748,36 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
     return node.rect.height / lh < 1.6 ? 'WIDTH_AND_HEIGHT' : 'HEIGHT';
   };
 
+  /**
+   * Map raw styled runs to spec runs. Returns undefined when every run's style
+   * matches the element-level base style (uniform text → legacy single-font
+   * path, backward compatible).
+   */
+  const mapRuns = (node: RawDomNode, base: SpecStyle): SpecTextRun[] | undefined => {
+    if (!node.runs || node.runs.length < 2) return undefined;
+    const runs: SpecTextRun[] = node.runs.map((r) => {
+      const run: SpecTextRun = { text: r.text };
+      const fam = mapFontFamily(r.style.fontFamily);
+      if (fam) run.fontFamily = fam;
+      const w = parseInt(r.style.fontWeight ?? '', 10);
+      if (Number.isFinite(w)) run.fontWeight = w;
+      if (r.style.fontStyle === 'italic') run.fontStyleName = 'Italic';
+      const color = parseCssColor(r.style.color);
+      if (color?.hex) {
+        run.color = color.hex;
+        if (color.a < 1) run.colorAlpha = Math.round(color.a * 1000) / 1000;
+      }
+      return run;
+    });
+    const same = (r: SpecTextRun) =>
+      (r.fontFamily ?? base.fontFamily) === base.fontFamily &&
+      (r.fontWeight ?? base.fontWeight) === base.fontWeight &&
+      (r.fontStyleName ?? base.fontStyleName) === base.fontStyleName &&
+      (r.color ?? base.color) === base.color &&
+      (r.colorAlpha ?? base.colorAlpha) === base.colorAlpha;
+    return runs.every(same) ? undefined : runs;
+  };
+
   const elementFor = (node: RawDomNode, parentKey: string): ReplicaElement | null => {
     const id = nid();
     const key = parentKey ? `${parentKey}/${node.tag}` : node.tag;
@@ -547,9 +795,12 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
       base.type = 'image';
       base.style = styleOf(node, false);
       if (node.rasterPng) {
-        // <img src="*.svg"> rasterized at extraction: PNG asset + vector source in meta.
-        const asset = addAsset('image', node.rasterPng, fileNameFor(node.src ?? '', `${name}.png`).replace(/\.svg$/i, '.png'));
-        asset.vectorUrl ??= node.src;
+        // Rasterized at extraction (2x PNG): svg-img keeps the vector source in
+        // vectorUrl; raster-img (webp/avif/…) keeps the original bytes URL in
+        // originalUrl as the importer's fallback.
+        const asset = addAsset('image', node.rasterPng, fileNameFor(node.src ?? '', `${name}.png`).replace(/\.[a-z0-9]+$/i, '.png'));
+        if (node.rasterSource === 'raster-img') asset.originalUrl ??= node.src;
+        else asset.vectorUrl ??= node.src;
         base.assetId = asset.id;
       } else if (node.src) {
         const asset = addAsset('image', node.src, fileNameFor(node.src, `${name}.png`));
@@ -602,6 +853,7 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
         base.type = 'text';
         base.text = node.text;
         base.style = styleOf(node, true);
+        base.runs = mapRuns(node, base.style);
         base.textAutoResize = textAutoResizeFor(node);
         return base;
       }
@@ -618,6 +870,7 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
           rect: { ...node.rect },
           style: textStyle,
           text: node.text,
+          runs: mapRuns(node, textStyle),
           textAutoResize: textAutoResizeFor(node),
         },
       ];
@@ -636,6 +889,7 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
       base.clipsContent = true;
     }
     if (node.text) {
+      const labelStyle = styleOf(node, true);
       base.children = [
         {
           key: `${key}/text`,
@@ -643,8 +897,9 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
           name: `${name}-label`,
           type: 'text',
           rect: { ...node.rect },
-          style: styleOf(node, true),
+          style: labelStyle,
           text: node.text,
+          runs: mapRuns(node, labelStyle),
           textAutoResize: textAutoResizeFor(node),
         },
         ...kids,
@@ -658,8 +913,9 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
 
   const sections: ReplicaSection[] = [];
   for (const sec of raw.sections) {
-    const rootEl = elementFor(sec.root, '');
+    let rootEl = elementFor(sec.root, '');
     if (!rootEl) continue;
+    if (opts.collapseContainers !== false) rootEl = collapseReplicaContainers(rootEl);
     // Section rect/style mirror the root element (copies — shifting / canvas-bg
     // stripping below must not double-apply through shared references).
     const section: ReplicaSection = {
@@ -762,11 +1018,55 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
 // Public entry
 // ---------------------------------------------------------------------------
 
+const EXTRACT_CACHE_TTL_MS = 5 * 60_000;
+const extractCache = new Map<string, { at: number; result: ExtractHtmlSpecResult }>();
+
+/** Test/housekeeping hook: drop all cached extraction results. */
+export function clearExtractHtmlCache() {
+  extractCache.clear();
+}
+
+/**
+ * Cache key: same (url, or htmlPath + file mtime, viewport, selectors). Raw
+ * `html` string sources are not cached (identity is the caller's string).
+ */
+function extractCacheKey(opts: ExtractHtmlSpecOptions): string | undefined {
+  let src: string | undefined;
+  if (opts.url) src = `url:${opts.url}`;
+  else if (opts.htmlPath) {
+    try {
+      const st = fs.statSync(path.resolve(opts.htmlPath));
+      src = `file:${path.resolve(opts.htmlPath)}:${st.mtimeMs}`;
+    } catch {
+      return undefined; // unreadable file: let openPage produce the real error
+    }
+  } else return undefined;
+  const vp = opts.viewport ?? { width: 1440, height: 900 };
+  return [
+    src,
+    `${vp.width}x${vp.height}`,
+    opts.rootSelector ?? 'body',
+    opts.sectionSelector ?? '',
+    opts.includeHidden ? 'H' : '',
+    opts.rasterizeSvg === false ? 'noSvg' : '',
+    opts.rasterizeRaster === false ? 'noRas' : '',
+    String(opts.rasterScale ?? 2),
+    opts.hideFixed ? 'hf' : '',
+  ].join('|');
+}
+
 /**
  * Render the HTML and produce a ReplicaSpec ready for `import_html_replica`.
  * Accepts exactly one of htmlPath / htmlUrl(=url) / html (see RenderOptions).
+ * Results for url / htmlPath sources are cached in-process for 5 minutes
+ * (disable with cache:false).
  */
 export async function extractHtmlToReplicaSpec(opts: ExtractHtmlSpecOptions): Promise<ExtractHtmlSpecResult> {
+  const key = opts.cache === false ? undefined : extractCacheKey(opts);
+  if (key) {
+    const hit = extractCache.get(key);
+    if (hit && Date.now() - hit.at < EXTRACT_CACHE_TTL_MS) return hit.result;
+  }
   const { raw, title } = await extractRawDom(opts);
   const warnings = [...raw.warnings];
   const name =
@@ -775,5 +1075,7 @@ export async function extractHtmlToReplicaSpec(opts: ExtractHtmlSpecOptions): Pr
       (opts.htmlPath ? path.basename(opts.htmlPath, path.extname(opts.htmlPath)) : undefined) ||
       'html-replica');
   const spec = rawDomToReplicaSpec(raw, { name, warnings });
-  return { spec, warnings };
+  const result = { spec, warnings };
+  if (key) extractCache.set(key, { at: Date.now(), result });
+  return result;
 }

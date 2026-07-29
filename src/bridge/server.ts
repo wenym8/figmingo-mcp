@@ -72,6 +72,15 @@ export class BridgeTimeoutError extends Error {
   }
 }
 
+/**
+ * Adaptive total cap for batch commands: max(120s, commandCount × 300ms).
+ * A 500-command import batch would otherwise trip a fixed cap while perfectly
+ * healthy; the 20s idle heartbeat timeout stays the primary circuit breaker.
+ */
+export function adaptiveBatchTimeoutMs(commandCount: number): number {
+  return Math.max(120_000, commandCount * 300);
+}
+
 export interface BridgeOptions {
   host?: string;
   port?: number;
@@ -315,8 +324,10 @@ export class PluginBridge extends EventEmitter {
    * Send a command to the plugin. While disconnected the command is queued
    * (bounded) and sent on reconnect; the idle/total timers start when sent.
    * Set opts.failIfDisconnected to reject immediately instead.
-   * opts.timeoutMs overrides the total cap (default 5 min); opts.idleTimeoutMs
-   * overrides the idle timeout (default 20s, reset by progress heartbeats).
+   * opts.timeoutMs overrides the total cap; without it, batch commands get an
+   * adaptive cap of max(120s, commandCount × 300ms) and other commands get the
+   * server default (5 min); opts.idleTimeoutMs overrides the idle timeout
+   * (default 20s, reset by progress heartbeats — the primary circuit breaker).
    */
   execute<T = unknown>(
     command: string,
@@ -325,13 +336,17 @@ export class PluginBridge extends EventEmitter {
   ): Promise<T> {
     const id = `cmd-${Date.now()}-${++this.seq}`;
     const envelope: BridgeCommand = { type: 'command', id, command, params };
+    const batchCount =
+      command === 'batch' && Array.isArray((params as { commands?: unknown[] } | undefined)?.commands)
+        ? ((params as { commands: unknown[] }).commands.length ?? 0)
+        : undefined;
     return new Promise<T>((resolve, reject) => {
       const p: PendingCommand = {
         envelope,
         resolve: resolve as (r: unknown) => void,
         reject,
         idleTimeoutMs: opts.idleTimeoutMs ?? this.opts.idleTimeoutMs,
-        totalTimeoutMs: opts.timeoutMs ?? this.opts.maxWaitMs,
+        totalTimeoutMs: opts.timeoutMs ?? (batchCount !== undefined ? adaptiveBatchTimeoutMs(batchCount) : this.opts.maxWaitMs),
         progress: [],
       };
       if (!this.started) {

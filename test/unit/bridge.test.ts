@@ -153,7 +153,7 @@ describe('PluginBridge', () => {
       // Well-behaved heartbeats every 60ms — idle never trips, total cap must.
       let i = 0;
       const tick = setInterval(() => {
-        if (client!.readyState !== WebSocket.OPEN || i > 20) return clearInterval(tick);
+        if (!client || client.readyState !== WebSocket.OPEN || i > 20) return clearInterval(tick);
         client!.send(JSON.stringify({ type: 'progress', id: msg.id, index: i, total: 100, command: 'create_frame', ok: true }));
         i++;
       }, 60);
@@ -184,5 +184,51 @@ describe('PluginBridge', () => {
     await expect(bridge.execute('create_frame', {}, { timeoutMs: 150 })).rejects.toThrow(/total cap/);
     // A following command still gets the default generous timeouts and succeeds.
     await expect(bridge.execute('get_selection')).resolves.toEqual({ selection: [] });
+  });
+});
+
+describe('adaptive batch timeout', () => {
+  let bridge: PluginBridge | undefined;
+  let client: WebSocket | undefined;
+
+  afterEach(async () => {
+    try {
+      client?.close();
+    } catch { /* ignore */ }
+    await bridge?.stop();
+    bridge = undefined;
+    client = undefined;
+  });
+
+  it('adaptiveBatchTimeoutMs = max(120s, commandCount × 300ms)', async () => {
+    const { adaptiveBatchTimeoutMs } = await import('../../src/bridge/server');
+    expect(adaptiveBatchTimeoutMs(0)).toBe(120_000);
+    expect(adaptiveBatchTimeoutMs(10)).toBe(120_000);
+    expect(adaptiveBatchTimeoutMs(1000)).toBe(300_000);
+    expect(adaptiveBatchTimeoutMs(2000)).toBe(600_000);
+  });
+
+  it('a batch without explicit timeoutMs gets the adaptive cap, not maxWaitMs', async () => {
+    // maxWaitMs 100ms would kill this batch; the adaptive cap (≥120s) lets a
+    // 300ms-late result through.
+    bridge = new PluginBridge({ port: 0, idleTimeoutMs: 2000, maxWaitMs: 100 });
+    await bridge.start();
+    client = await connectClient(bridge.port);
+    await new Promise((r) => setTimeout(r, 50));
+    client.on('message', (data) => {
+      const msg = JSON.parse(String(data));
+      if (msg.type !== 'command') return;
+      setTimeout(() => client!.send(JSON.stringify({ type: 'result', id: msg.id, ok: true, result: { executed: 3 } })), 300);
+    });
+    const result = await bridge.execute<{ executed: number }>('batch', { commands: [{}, {}, {}] });
+    expect(result.executed).toBe(3);
+  });
+
+  it('an explicit timeoutMs still overrides the adaptive cap', async () => {
+    bridge = new PluginBridge({ port: 0, idleTimeoutMs: 2000, maxWaitMs: 100 });
+    await bridge.start();
+    client = await connectClient(bridge.port);
+    await new Promise((r) => setTimeout(r, 50));
+    await expect(bridge.execute('batch', { commands: [{}, {}, {}] }, { timeoutMs: 120 })).rejects.toThrow(/total cap/);
   });
 });

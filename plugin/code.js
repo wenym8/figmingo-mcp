@@ -67,26 +67,48 @@ function substitute(value, vars) {
  * chain instead of freezing the batch.
  */
 const FONT_LOAD_TIMEOUT_MS = 8000;
+// Successfully loaded "family style" keys — loadFontAsync is only needed once
+// per font per session (item: font load cache).
+const loadedFonts = new Set();
+// loadFont resolution cache: requested key (+ fallback chain) → resolved font.
+const resolvedFontCache = new Map();
 function tryLoadFont(font) {
+    const key = `${font.family} ${font.style}`;
+    if (loadedFonts.has(key))
+        return Promise.resolve();
     return Promise.race([
-        figma.loadFontAsync(font),
+        figma.loadFontAsync(font).then(() => {
+            loadedFonts.add(key);
+        }),
         new Promise((_, reject) => setTimeout(() => reject(new Error(`loadFontAsync timed out after ${FONT_LOAD_TIMEOUT_MS}ms`)), FONT_LOAD_TIMEOUT_MS)),
     ]);
 }
 async function loadFont(fontName, fallbackStyles, beat) {
     const font = fontName ?? { family: 'Inter', style: 'Regular' };
+    const cacheKey = `${font.family}|${font.style}|${(fallbackStyles ?? []).join(',')}`;
+    const cached = resolvedFontCache.get(cacheKey);
+    if (cached)
+        return cached;
+    const finish = (out) => {
+        resolvedFontCache.set(cacheKey, out);
+        return out;
+    };
     try {
         beat?.();
         await tryLoadFont(font);
-        return { font, fallback: undefined };
+        return finish({ font, fallback: undefined });
     }
     catch {
         const attempts = [];
         // Same-family nearest styles first (e.g. SemiBold → Medium/Bold/Regular),
-        // then family Regular, then Inter Regular as the floor.
+        // then family Regular, then Inter AT THE REQUESTED WEIGHT (preserves the
+        // visual weight when the whole family is unavailable), then Inter Regular.
         for (const style of fallbackStyles ?? [])
             attempts.push({ family: font.family, style });
-        attempts.push({ family: font.family, style: 'Regular' }, { family: 'Inter', style: 'Regular' });
+        attempts.push({ family: font.family, style: 'Regular' });
+        if (font.family !== 'Inter')
+            attempts.push({ family: 'Inter', style: font.style });
+        attempts.push({ family: 'Inter', style: 'Regular' });
         const seen = new Set([`${font.family} ${font.style}`]);
         for (const f of attempts) {
             const key = `${f.family} ${f.style}`;
@@ -96,7 +118,7 @@ async function loadFont(fontName, fallbackStyles, beat) {
             try {
                 beat?.();
                 await tryLoadFont(f);
-                return { font: f, fallback: `requested ${font.family} ${font.style} unavailable` };
+                return finish({ font: f, fallback: `requested ${font.family} ${font.style} unavailable` });
             }
             catch {
                 /* try next */
@@ -105,6 +127,8 @@ async function loadFont(fontName, fallbackStyles, beat) {
         throw new Error(`font unavailable: ${font.family} ${font.style}`);
     }
 }
+// Content-hash → figma image.hash cache for the insert_image hash-reuse protocol.
+const imageHashCache = new Map();
 /** Uniform number or [topLeft, topRight, bottomRight, bottomLeft]. */
 function applyCornerRadius(node, radius) {
     if (Array.isArray(radius)) {
@@ -207,7 +231,37 @@ const handlers = {
             // resize would fight auto-width (Chromium→Figma metric drift otherwise
             // wraps single-line text into two lines).
         }
-        return { nodeId: text.id, fontApplied: font, ...(fallback ? { fontFallback: fallback } : {}) };
+        // Styled runs (merged inline-formatting text): per-range fonts/fills.
+        // Degradation ladder: a run that fails keeps the node-wide base font +
+        // warning; a wholesale failure of the runs loop leaves the legacy
+        // single-font text intact + warning.
+        const runWarnings = [];
+        if (Array.isArray(params.runs) && params.runs.length) {
+            try {
+                for (const run of params.runs) {
+                    try {
+                        const rf = await loadFont(run.fontName, run.fallbackStyles, ctx?.beat);
+                        text.setRangeFontName(run.start, run.end, rf.font);
+                        if (run.fills)
+                            text.setRangeFills(run.start, run.end, run.fills);
+                        if (rf.fallback)
+                            runWarnings.push(`run [${run.start},${run.end}) ${rf.fallback}`);
+                    }
+                    catch (err) {
+                        runWarnings.push(`styled run [${run.start},${run.end}) failed: ${err instanceof Error ? err.message : String(err)}; kept base font`);
+                    }
+                }
+            }
+            catch (err) {
+                runWarnings.push(`styled runs failed entirely: ${err instanceof Error ? err.message : String(err)}; kept base font`);
+            }
+        }
+        return {
+            nodeId: text.id,
+            fontApplied: font,
+            ...(fallback ? { fontFallback: fallback } : {}),
+            ...(runWarnings.length ? { warnings: runWarnings } : {}),
+        };
     },
     async create_rectangle(params, vars) {
         const parent = parentOf(params, vars);
@@ -320,17 +374,29 @@ const handlers = {
     },
     async insert_image(params, vars) {
         const parent = parentOf(params, vars);
-        const bytes = figma.base64Decode(params.bytesBase64);
-        // figma.createImage only accepts raster bytes (PNG/JPG/GIF/WebP). SVG
-        // payloads decode "successfully" but render as grey boxes — reject early.
-        let head = '';
-        const sniff = Math.min(bytes.length, 256);
-        for (let i = 0; i < sniff; i++)
-            head += String.fromCharCode(bytes[i]);
-        if (/^\s*</.test(head) && /<svg[\s>]/i.test(head)) {
-            throw new Error('insert_image: SVG payloads are not supported by figma.createImage (rasterize the SVG to PNG first)');
+        // Hash-reuse protocol: the server content-hashes image bytes; duplicates
+        // send only `imageHash` and we reuse the previously created figma Image.
+        let imageHash = params.imageHash ? imageHashCache.get(String(params.imageHash)) : undefined;
+        if (!imageHash) {
+            if (!params.bytesBase64) {
+                throw new Error(`insert_image: unknown imageHash "${params.imageHash}" and no bytesBase64 supplied ` +
+                    '(the plugin session may have restarted — resend the bytes)');
+            }
+            const bytes = figma.base64Decode(params.bytesBase64);
+            // figma.createImage only accepts raster bytes (PNG/JPG/GIF/WebP). SVG
+            // payloads decode "successfully" but render as grey boxes — reject early.
+            let head = '';
+            const sniff = Math.min(bytes.length, 256);
+            for (let i = 0; i < sniff; i++)
+                head += String.fromCharCode(bytes[i]);
+            if (/^\s*</.test(head) && /<svg[\s>]/i.test(head)) {
+                throw new Error('insert_image: SVG payloads are not supported by figma.createImage (rasterize the SVG to PNG first)');
+            }
+            const image = figma.createImage(bytes);
+            imageHash = image.hash;
+            if (params.imageHash)
+                imageHashCache.set(String(params.imageHash), imageHash);
         }
-        const image = figma.createImage(bytes);
         const rect = figma.createRectangle();
         rect.name = params.name ?? 'Image';
         parent.appendChild(rect);
@@ -342,8 +408,8 @@ const handlers = {
         if (params.opacity !== undefined)
             rect.opacity = params.opacity;
         applyStroke(rect, params);
-        rect.fills = [{ type: 'IMAGE', imageHash: image.hash, scaleMode: params.scaleMode ?? 'FILL' }];
-        return { nodeId: rect.id, imageHash: image.hash };
+        rect.fills = [{ type: 'IMAGE', imageHash, scaleMode: params.scaleMode ?? 'FILL' }];
+        return { nodeId: rect.id, imageHash };
     },
     async move_node(params) {
         const node = findNode(params.nodeId);
@@ -417,6 +483,32 @@ const handlers = {
         const commands = params.commands ?? [];
         const total = commands.length;
         const stopOnError = params.stopOnError !== false;
+        // Parallel font preload: scan the batch for every font a create_text might
+        // need (primary + same-family fallbacks + styled-run fonts) and load them
+        // up front; the load cache then makes per-command loadFont calls instant.
+        const preload = new Map();
+        const offer = (family, style) => {
+            if (!family || !style)
+                return;
+            preload.set(`${family} ${style}`, { family, style });
+        };
+        for (const cmd of commands) {
+            if (cmd.command !== 'create_text')
+                continue;
+            const p = cmd.params ?? {};
+            const fam = p.fontName?.family;
+            offer(fam, p.fontName?.style);
+            for (const st of p.fallbackStyles ?? [])
+                offer(fam, st);
+            for (const run of p.runs ?? []) {
+                offer(run.fontName?.family, run.fontName?.style);
+                for (const st of run.fallbackStyles ?? [])
+                    offer(run.fontName?.family, st);
+            }
+        }
+        if (preload.size > 1) {
+            await Promise.all(Array.from(preload.values()).map((f) => tryLoadFont(f).catch(() => undefined)));
+        }
         let aborted = false;
         let abortError;
         for (let i = 0; i < commands.length; i++) {

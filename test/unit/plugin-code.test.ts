@@ -43,6 +43,12 @@ function makeNode(type: string) {
     remove() {
       removed.push(this.id);
     },
+    setRangeFontName(start: number, end: number, font: any) {
+      (this.rangeFonts ||= []).push([start, end, font]);
+    },
+    setRangeFills(start: number, end: number, fills: any) {
+      (this.rangeFills ||= []).push([start, end, fills]);
+    },
   };
   return node;
 }
@@ -50,6 +56,8 @@ function makeNode(type: string) {
 beforeAll(async () => {
   const failFonts = new Set<string>();
   const hangFonts = new Set<string>();
+  const fontLoadCounts = new Map<string, number>();
+  let createImageCalls = 0;
   const findDeep = (nodes: any[], fn: (n: any) => boolean): any => {
     for (const n of nodes) {
       if (fn(n)) return n;
@@ -63,6 +71,8 @@ beforeAll(async () => {
     editorType: 'figma',
     __failFonts: failFonts,
     __hangFonts: hangFonts,
+    __fontLoadCount: (key: string) => fontLoadCounts.get(key) ?? 0,
+    __createImageCalls: () => createImageCalls,
     currentPage: {
       id: '0:1',
       name: 'Page 1',
@@ -88,11 +98,15 @@ beforeAll(async () => {
     createFrame: () => makeNode('FRAME'),
     createRectangle: () => makeNode('RECTANGLE'),
     createText: () => makeNode('TEXT'),
-    createImage: () => ({ hash: 'hash-abc123' }),
+    createImage: () => {
+      createImageCalls++;
+      return { hash: 'hash-abc123' };
+    },
     base64Decode: (s: string) => Uint8Array.from(Buffer.from(s, 'base64')),
     base64Encode: (b: Uint8Array) => Buffer.from(b).toString('base64'),
     loadFontAsync: async (font: { family: string; style: string }) => {
       const key = `${font.family} ${font.style}`;
+      fontLoadCounts.set(key, (fontLoadCounts.get(key) ?? 0) + 1);
       if (hangFonts.has(key)) return new Promise(() => {}); // never settles — the observed Figma hang
       if (failFonts.has(key)) throw new Error(`missing font ${key}`);
     },
@@ -421,5 +435,109 @@ describe('plugin code.ts — loadFontAsync hang resilience', () => {
       vi.useRealTimers();
       figma.__hangFonts.delete('PingFang SC ExtraBold');
     }
+  });
+});
+
+describe('plugin code.ts — optimization round', () => {
+  const PNG_1PX =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+  it('font cache: a second create_text with the same font does not call loadFontAsync again', async () => {
+    const figma = (globalThis as any).figma;
+    const before = figma.__fontLoadCount('CacheFam Regular');
+    await runCommand('fc1', 'create_text', { characters: 'a', fontName: { family: 'CacheFam', style: 'Regular' } });
+    await runCommand('fc2', 'create_text', { characters: 'b', fontName: { family: 'CacheFam', style: 'Regular' } });
+    expect(figma.__fontLoadCount('CacheFam Regular') - before).toBe(1);
+  });
+
+  it('weight-preserving fallback: a fully missing family lands on Inter at the requested weight', async () => {
+    const figma = (globalThis as any).figma;
+    figma.__failFonts.add('GhostFam Bold');
+    figma.__failFonts.add('GhostFam SemiBold');
+    figma.__failFonts.add('GhostFam Regular');
+    const msgs = await runCommand('wf1', 'create_text', {
+      characters: 'heavy',
+      fontName: { family: 'GhostFam', style: 'Bold' },
+      fallbackStyles: ['SemiBold'],
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+    expect(result?.ok).toBe(true);
+    // Family Regular failed too → Inter Bold (weight preserved), not Inter Regular.
+    expect(result?.result.fontApplied).toEqual({ family: 'Inter', style: 'Bold' });
+    expect(result?.result.fontFallback).toMatch(/GhostFam Bold unavailable/);
+  });
+
+  it('styled runs: per-range fonts and fills applied through the load chain', async () => {
+    const figma = (globalThis as any).figma;
+    const msgs = await runCommand('sr1', 'create_text', {
+      characters: 'Price $12 now',
+      fontName: { family: 'RunsFam', style: 'Regular' },
+      runs: [
+        { start: 0, end: 6, fontName: { family: 'RunsFam', style: 'Regular' } },
+        { start: 6, end: 9, fontName: { family: 'RunsFam', style: 'Bold' } },
+        { start: 9, end: 13, fontName: { family: 'RunsFam', style: 'Regular' }, fills: [{ type: 'SOLID', color: { r: 1, g: 0, b: 0 } }] },
+      ],
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+    expect(result?.ok).toBe(true);
+    expect(result?.result.warnings).toBeUndefined();
+    const text = figma.currentPage.children.at(-1);
+    expect(text.rangeFonts).toEqual([
+      [0, 6, { family: 'RunsFam', style: 'Regular' }],
+      [6, 9, { family: 'RunsFam', style: 'Bold' }],
+      [9, 13, { family: 'RunsFam', style: 'Regular' }],
+    ]);
+    expect(text.rangeFills).toHaveLength(1);
+    expect(text.rangeFills[0][0]).toBe(9);
+  });
+
+  it('a failing run keeps the base font and surfaces a warning; the node is still created', async () => {
+    const figma = (globalThis as any).figma;
+    figma.__failFonts.add('RunsFail Bold');
+    figma.__failFonts.add('RunsFail Regular');
+    // Inter Bold loads fine — the run degrades to Inter Bold rather than failing.
+    const msgs = await runCommand('sr2', 'create_text', {
+      characters: 'ab',
+      fontName: { family: 'RunsBase', style: 'Regular' },
+      runs: [{ start: 0, end: 1, fontName: { family: 'RunsFail', style: 'Bold' } }],
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+    expect(result?.ok).toBe(true);
+    const text = figma.currentPage.children.at(-1);
+    // loadFont chain for the run fell back to Inter Bold — applied, with a warning.
+    expect(text.rangeFonts[0][2]).toEqual({ family: 'Inter', style: 'Bold' });
+    expect(result?.result.warnings?.some((w: string) => w.includes('RunsFail Bold unavailable'))).toBe(true);
+  });
+
+  it('insert_image imageHash reuse: duplicates skip bytes and createImage; unknown hash without bytes errors', async () => {
+    const figma = (globalThis as any).figma;
+    const before = figma.__createImageCalls();
+    const first = await runCommand('hh1', 'insert_image', { imageHash: 'content-hash-1', bytesBase64: PNG_1PX, width: 10, height: 10 });
+    expect(first.find((m) => m.type === 'command-result')?.ok).toBe(true);
+    const second = await runCommand('hh2', 'insert_image', { imageHash: 'content-hash-1', width: 10, height: 10 });
+    const res2 = second.find((m) => m.type === 'command-result');
+    expect(res2?.ok).toBe(true);
+    expect(res2?.result.imageHash).toBe('hash-abc123');
+    expect(figma.__createImageCalls() - before).toBe(1); // decoded/created once
+    const rect = figma.currentPage.children.at(-1);
+    expect(rect.fills[0]).toMatchObject({ type: 'IMAGE', imageHash: 'hash-abc123' });
+    const third = await runCommand('hh3', 'insert_image', { imageHash: 'never-seen', width: 10, height: 10 });
+    expect(third.find((m) => m.type === 'command-result')?.ok).toBe(false);
+    expect(third.find((m) => m.type === 'command-result')?.error).toMatch(/unknown imageHash/);
+  });
+
+  it('batch font preload: unique fonts load once up front, commands reuse the cache', async () => {
+    const figma = (globalThis as any).figma;
+    const before = figma.__fontLoadCount('PreFam Bold');
+    const msgs = await runCommand('pl1', 'batch', {
+      commands: [
+        { command: 'create_text', params: { characters: 'x', fontName: { family: 'PreFam', style: 'Bold' } } },
+        { command: 'create_text', params: { characters: 'y', fontName: { family: 'PreFam', style: 'Bold' } } },
+        { command: 'create_rectangle', params: { width: 4, height: 4 } },
+      ],
+    });
+    const final = msgs.find((m) => m.type === 'command-result');
+    expect(final?.result.results.every((r: any) => r.ok)).toBe(true);
+    expect(figma.__fontLoadCount('PreFam Bold') - before).toBe(1); // preloaded once, then cached
   });
 });
