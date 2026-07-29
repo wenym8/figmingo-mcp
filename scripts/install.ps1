@@ -71,6 +71,25 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 # --- 3. Figma token ----------------------------------------------------------
 if (-not $Token -and $env:FIGMA_API_KEY) { $Token = $env:FIGMA_API_KEY }
+# Reuse a token already written by a previous install (re-runs must not wipe it).
+if (-not $Token) {
+  $inheritPaths = @(
+    (Join-Path $HOME ".cursor\mcp.json"),
+    (Join-Path $HOME ".claude.json"),
+    (Join-Path $env:APPDATA "Claude\claude_desktop_config.json"),
+    (Join-Path $env:APPDATA "Code\User\mcp.json"),
+    (Join-Path $HOME ".kimi\mcp.json")
+  )
+  foreach ($p in $inheritPaths) {
+    if (Test-Path $p) {
+      try {
+        $j = Get-Content $p -Raw | ConvertFrom-Json
+        $t = $j.mcpServers.figmingo.env.FIGMA_API_KEY
+        if ($t) { $Token = $t; Info "reused Figma token from $p"; break }
+      } catch { }
+    }
+  }
+}
 if (-not $Token -and -not $Yes -and [Environment]::UserInteractive) {
   $Token = Read-Host "Figma Personal Access Token (leave empty to configure later)"
 }
@@ -93,6 +112,11 @@ function Write-Config($name, $path) {
     $cfg = $raw | ConvertFrom-Json
   }
   if (-not $cfg.mcpServers) { $cfg | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{}) }
+  # Non-destructive re-runs: keep a previously written env (token) when this
+  # run has none to write.
+  if (-not $Token -and $cfg.mcpServers.figmingo -and $cfg.mcpServers.figmingo.env) {
+    $entry.env = $cfg.mcpServers.figmingo.env
+  }
   $cfg.mcpServers | Add-Member -NotePropertyName "figmingo" -NotePropertyValue $entry -Force
   [System.IO.File]::WriteAllText($path, ($cfg | ConvertTo-Json -Depth 20) + "`n", $script:Utf8NoBom)
   Info "wrote $name config -> $path"
@@ -105,6 +129,11 @@ function Write-Config($name, $path) {
 function Write-CodexConfig($path) {
   $dir = Split-Path $path -Parent
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  # Non-destructive re-runs: inherit a previously written token.
+  if (-not $script:Token -and (Test-Path $path)) {
+    $m = Select-String -Path $path -Pattern '^FIGMA_API_KEY = "(.*)"\s*$' | Select-Object -First 1
+    if ($m) { $script:Token = $m.Matches[0].Groups[1].Value }
+  }
   $tomlCmd = $Cmd -replace '\\', '/'   # backslashes are escape chars in TOML basic strings
   $tomlArgs = @()
   if ($Cmd -eq "npx figmingo-mcp") { $tomlCmd = "npx"; $tomlArgs = @("-y", "figmingo-mcp") }
@@ -179,9 +208,12 @@ if ($src) {
 # from manifest..." file picker. Put a shortcut on the Desktop (fallback: $HOME)
 # pointing at the real folder. Symlink needs admin/Developer Mode on Windows,
 # so fall back to a plain copy when linking fails.
+# Desktop may be OneDrive-redirected on Windows — ask the shell for the real
+# location instead of assuming $HOME\Desktop.
+$desktopPath = [Environment]::GetFolderPath('Desktop')
 $pluginLink = $null
-foreach ($base in @((Join-Path $HOME "Desktop"), $HOME)) {
-  if (Test-Path $base) { $pluginLink = Join-Path $base "figmingo-plugin"; break }
+foreach ($base in @($desktopPath, $HOME)) {
+  if ($base -and (Test-Path $base)) { $pluginLink = Join-Path $base "figmingo-plugin"; break }
 }
 if ($pluginLink -and (Test-Path (Join-Path $pluginDir "manifest.json"))) {
   $linked = $false
