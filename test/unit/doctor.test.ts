@@ -135,6 +135,10 @@ describe('doctor checks', () => {
     const linux = clientConfigTargets('/home/u', 'linux');
     expect(linux.find((t) => t.id === 'vscode')!.path).toBe('/home/u/.config/Code/User/mcp.json');
     expect(linux.find((t) => t.id === 'codex')!.kind).toBe('toml');
+    const win = clientConfigTargets('C:\\Users\\u', 'win32');
+    expect(win).toHaveLength(6);
+    expect(win.find((t) => t.id === 'claude-desktop')!.path).toContain('AppData/Roaming/Claude');
+    expect(win.find((t) => t.id === 'vscode')!.path).toContain('AppData/Roaming/Code/User/mcp.json');
   });
 
   it('runDoctorChecks aggregates; report shows ✓/✗ with fixes; exit semantics', async () => {

@@ -218,6 +218,9 @@ export interface ClientConfigTarget {
 
 export function clientConfigTargets(homeDir: string, platform: NodeJS.Platform): ClientConfigTarget[] {
   const mac = platform === 'darwin';
+  const win = platform === 'win32';
+  // %APPDATA% (= ~/AppData/Roaming) on Windows; ~/.config on Linux.
+  const roaming = (...segs: string[]) => path.join(homeDir, 'AppData', 'Roaming', ...segs);
   return [
     { id: 'cursor', label: 'Cursor', path: path.join(homeDir, '.cursor', 'mcp.json'), kind: 'json' },
     { id: 'claude-code', label: 'Claude Code', path: path.join(homeDir, '.claude.json'), kind: 'json' },
@@ -226,7 +229,9 @@ export function clientConfigTargets(homeDir: string, platform: NodeJS.Platform):
       label: 'Claude Desktop',
       path: mac
         ? path.join(homeDir, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
-        : path.join(homeDir, '.config', 'Claude', 'claude_desktop_config.json'),
+        : win
+          ? roaming('Claude', 'claude_desktop_config.json')
+          : path.join(homeDir, '.config', 'Claude', 'claude_desktop_config.json'),
       kind: 'json',
     },
     {
@@ -234,7 +239,9 @@ export function clientConfigTargets(homeDir: string, platform: NodeJS.Platform):
       label: 'VS Code',
       path: mac
         ? path.join(homeDir, 'Library', 'Application Support', 'Code', 'User', 'mcp.json')
-        : path.join(homeDir, '.config', 'Code', 'User', 'mcp.json'),
+        : win
+          ? roaming('Code', 'User', 'mcp.json')
+          : path.join(homeDir, '.config', 'Code', 'User', 'mcp.json'),
       kind: 'json',
     },
     { id: 'kimi', label: 'Kimi CLI', path: path.join(homeDir, '.kimi', 'mcp.json'), kind: 'json' },

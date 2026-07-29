@@ -45,6 +45,30 @@ if (-not $NoInstall) {
 $CmdObj = Get-Command figmingo-mcp -ErrorAction SilentlyContinue
 if ($CmdObj) { $Cmd = $CmdObj.Source } else { $Cmd = "npx figmingo-mcp" }
 
+# fnm users: Get-Command resolves into fnm's per-session multishell directory
+# (...\fnm_multishells\<pid>\...), which fnm deletes when that shell exits —
+# an MCP config pointing there breaks permanently. Rewrite to the stable
+# node-versions install of the same Node version.
+if ($Cmd -match 'fnm_multishells') {
+  $nodeVer = (node -p 'process.version')
+  $stableCandidates = @(
+    (Join-Path $env:APPDATA "fnm\node-versions\$nodeVer\installation\figmingo-mcp.cmd"),
+    (Join-Path $env:LOCALAPPDATA "fnm\node-versions\$nodeVer\installation\figmingo-mcp.cmd"),
+    (Join-Path $HOME ".fnm\node-versions\$nodeVer\installation\figmingo-mcp.cmd")
+  )
+  $stable = $stableCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+  if ($stable) {
+    $Cmd = $stable
+    Info "fnm multishell path detected; using stable path: $Cmd"
+  } else {
+    Warn "fnm multishell path detected but no stable install found; re-run from a login shell or use npx"
+  }
+}
+
+# JSON/TOML files must be UTF-8 WITHOUT BOM (Windows PowerShell 5.1's
+# Set-Content -Encoding UTF8 writes a BOM that strict JSON parsers reject).
+$script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
 # --- 3. Figma token ----------------------------------------------------------
 if (-not $Token -and $env:FIGMA_API_KEY) { $Token = $env:FIGMA_API_KEY }
 if (-not $Token -and -not $Yes -and [Environment]::UserInteractive) {
@@ -70,7 +94,7 @@ function Write-Config($name, $path) {
   }
   if (-not $cfg.mcpServers) { $cfg | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{}) }
   $cfg.mcpServers | Add-Member -NotePropertyName "figmingo" -NotePropertyValue $entry -Force
-  $cfg | ConvertTo-Json -Depth 20 | Set-Content $path -Encoding UTF8
+  [System.IO.File]::WriteAllText($path, ($cfg | ConvertTo-Json -Depth 20) + "`n", $script:Utf8NoBom)
   Info "wrote $name config -> $path"
 }
 
@@ -81,7 +105,7 @@ function Write-Config($name, $path) {
 function Write-CodexConfig($path) {
   $dir = Split-Path $path -Parent
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
-  $tomlCmd = $Cmd
+  $tomlCmd = $Cmd -replace '\\', '/'   # backslashes are escape chars in TOML basic strings
   $tomlArgs = @()
   if ($Cmd -eq "npx figmingo-mcp") { $tomlCmd = "npx"; $tomlArgs = @("-y", "figmingo-mcp") }
   $lines = @()
@@ -110,7 +134,7 @@ function Write-CodexConfig($path) {
     $out.Add("[mcp_servers.figmingo.env]")
     $out.Add("FIGMA_API_KEY = `"$Token`"")
   }
-  Set-Content -Path $path -Value $out -Encoding UTF8
+  [System.IO.File]::WriteAllText($path, ($out -join "`n") + "`n", $script:Utf8NoBom)
   Info "wrote Codex config -> $path"
 }
 
