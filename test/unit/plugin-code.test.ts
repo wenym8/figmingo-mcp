@@ -48,9 +48,19 @@ function makeNode(type: string) {
 }
 
 beforeAll(async () => {
+  const failFonts = new Set<string>();
+  const findDeep = (nodes: any[], fn: (n: any) => boolean): any => {
+    for (const n of nodes) {
+      if (fn(n)) return n;
+      const hit = findDeep(n.children ?? [], fn);
+      if (hit) return hit;
+    }
+    return null;
+  };
   const figmaStub: any = {
     root: { name: 'UnitTestFile' },
     editorType: 'figma',
+    __failFonts: failFonts,
     currentPage: {
       id: '0:1',
       name: 'Page 1',
@@ -59,7 +69,9 @@ beforeAll(async () => {
       appendChild(child: any) {
         this.children.push(child);
       },
-      findOne: () => null,
+      findOne(fn: (n: any) => boolean) {
+        return findDeep(this.children, fn);
+      },
     },
     showUI: () => {},
     notify: () => {},
@@ -73,7 +85,13 @@ beforeAll(async () => {
     },
     createFrame: () => makeNode('FRAME'),
     createRectangle: () => makeNode('RECTANGLE'),
-    loadFontAsync: async () => {},
+    createText: () => makeNode('TEXT'),
+    createImage: () => ({ hash: 'hash-abc123' }),
+    base64Decode: (s: string) => Uint8Array.from(Buffer.from(s, 'base64')),
+    base64Encode: (b: Uint8Array) => Buffer.from(b).toString('base64'),
+    loadFontAsync: async (font: { family: string; style: string }) => {
+      if (failFonts.has(`${font.family} ${font.style}`)) throw new Error(`missing font ${font.family} ${font.style}`);
+    },
   };
   (globalThis as any).figma = figmaStub;
   (globalThis as any).__html__ = '<html></html>';
@@ -176,5 +194,99 @@ describe('plugin code.ts (sandbox half, stubbed figma)', () => {
     const final = msgs.find((m) => m.type === 'command-result');
     expect(final?.result.results[0].error).toMatch(/nested batch/);
     expect(final?.result.results[1].error).toMatch(/unknown command/);
+  });
+});
+
+describe('plugin code.ts — importer fix support', () => {
+  const PNG_1PX =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+  it('create_frame applies strokes + four-corner cornerRadius', async () => {
+    const msgs = await runCommand('s1', 'create_frame', {
+      width: 40,
+      height: 40,
+      cornerRadius: [36, 36, 0, 0],
+      strokes: [{ type: 'SOLID', color: { r: 1, g: 0, b: 0 } }],
+      strokeWeight: 2,
+    });
+    expect(msgs.find((m) => m.type === 'command-result')?.ok).toBe(true);
+    const frame = (globalThis as any).figma.currentPage.children.at(-1);
+    expect(frame.topLeftRadius).toBe(36);
+    expect(frame.bottomRightRadius).toBe(0);
+    expect(frame.strokeWeight).toBe(2);
+    expect(frame.strokes).toHaveLength(1);
+  });
+
+  it('insert_image applies cornerRadius (native image rounding)', async () => {
+    const msgs = await runCommand('i1', 'insert_image', {
+      bytesBase64: PNG_1PX,
+      width: 100,
+      height: 100,
+      cornerRadius: 30,
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+    expect(result?.ok).toBe(true);
+    expect(result?.result.imageHash).toBe('hash-abc123');
+    const rect = (globalThis as any).figma.currentPage.children.at(-1);
+    expect(rect.cornerRadius).toBe(30);
+    expect(rect.fills[0]).toMatchObject({ type: 'IMAGE', imageHash: 'hash-abc123' });
+  });
+
+  it('insert_image rejects SVG payloads with an explicit error', async () => {
+    const svgB64 = Buffer.from('<svg viewBox="0 0 1 1"><rect width="1" height="1"/></svg>', 'utf8').toString('base64');
+    const msgs = await runCommand('i2', 'insert_image', { bytesBase64: svgB64, width: 10, height: 10 });
+    const result = msgs.find((m) => m.type === 'command-result');
+    expect(result?.ok).toBe(false);
+    expect(result?.error).toMatch(/SVG payloads are not supported/);
+  });
+
+  it('create_text falls back through fallbackStyles and reports fontApplied + fontFallback', async () => {
+    const figma = (globalThis as any).figma;
+    figma.__failFonts.add('Inter SemiBold');
+    const msgs = await runCommand('t1', 'create_text', {
+      characters: 'Hello',
+      fontName: { family: 'Inter', style: 'SemiBold' },
+      fallbackStyles: ['Medium', 'Bold', 'Regular'],
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+    expect(result?.ok).toBe(true);
+    expect(result?.result.fontApplied).toEqual({ family: 'Inter', style: 'Medium' });
+    expect(result?.result.fontFallback).toMatch(/Inter SemiBold unavailable/);
+    const text = figma.currentPage.children.at(-1);
+    expect(text.fontName).toEqual({ family: 'Inter', style: 'Medium' });
+    figma.__failFonts.delete('Inter SemiBold');
+  });
+
+  it('set_fills warns when the write does not stick', async () => {
+    const figma = (globalThis as any).figma;
+    // A node whose fills setter silently ignores writes (the observed bridge quirk).
+    const stubborn: any = makeNode('FRAME');
+    let stored: any = [];
+    Object.defineProperty(stubborn, 'fills', {
+      get: () => stored,
+      set: () => {
+        /* ignored — quirk simulation */
+      },
+    });
+    figma.currentPage.appendChild(stubborn);
+    const msgs = await runCommand('f1', 'set_fills', {
+      nodeId: stubborn.id,
+      fills: [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }],
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+    expect(result?.ok).toBe(true);
+    expect(result?.result.warning).toMatch(/did not stick/);
+
+    // And the normal path returns no warning.
+    const normal: any = makeNode('FRAME');
+    normal.fills = []; // real geometry nodes always expose fills
+    figma.currentPage.appendChild(normal);
+    const msgs2 = await runCommand('f2', 'set_fills', {
+      nodeId: normal.id,
+      fills: [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }],
+    });
+    const result2 = msgs2.find((m) => m.type === 'command-result');
+    expect(result2?.ok).toBe(true);
+    expect(result2?.result.warning).toBeUndefined();
   });
 });

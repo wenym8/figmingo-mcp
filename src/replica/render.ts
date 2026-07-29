@@ -108,7 +108,7 @@ export interface ExtractOptions extends RenderOptions {
   captureSvg?: boolean;
 }
 
-async function launchBrowser() {
+export async function launchBrowser() {
   const { chromium } = await import('playwright');
   try {
     return await chromium.launch({ headless: true });
@@ -125,7 +125,7 @@ async function launchBrowser() {
   }
 }
 
-async function openPage(browser: Awaited<ReturnType<typeof launchBrowser>>, opts: RenderOptions) {
+export async function openPage(browser: Awaited<ReturnType<typeof launchBrowser>>, opts: RenderOptions) {
   const page = await browser.newPage({ viewport: opts.viewport ?? { width: 1440, height: 900 } });
   const timeout = opts.timeoutMs ?? 60000;
   if (opts.initScript) await page.addInitScript(opts.initScript);

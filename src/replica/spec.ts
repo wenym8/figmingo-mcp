@@ -30,8 +30,12 @@ export interface SpecStyle {
   textAlign?: string;
   textTransform?: string;
   opacity?: number;
+  /** Uniform radius (number) or per-corner [topLeft, topRight, bottomRight, bottomLeft] in px. */
   borderRadius?: number | number[];
+  /** CSS box-shadow string (may contain multiple comma-separated shadows, `inset` supported). */
   boxShadow?: string;
+  /** Uniform CSS border (extracted from HTML). Non-uniform borders degrade to the max-width side. */
+  border?: { color: string; colorAlpha?: number; width: number; style?: 'solid' | 'dashed' | 'dotted' };
 }
 
 export type ReplicaElementType = 'text' | 'image' | 'svg' | 'frame' | 'button' | 'input';
@@ -48,6 +52,15 @@ export interface ReplicaElement {
   assetHint?: string; // 'logo' | 'icon' | 'product' | ... (heuristics, parameterized)
   assetId?: string; // reference into assets manifest
   childrenCount?: number;
+  /** Container clips its children (HTML overflow != visible → Figma clipsContent). */
+  clipsContent?: boolean;
+  /**
+   * Nested children for container elements (produced by the HTML extractor).
+   * When present on the section root element the importer recurses with
+   * parent-relative coordinate conversion; flat specs (no children anywhere)
+   * import exactly as before.
+   */
+  children?: ReplicaElement[];
 }
 
 export interface ReplicaSection {
@@ -75,7 +88,7 @@ export interface ReplicaAsset {
 
 export interface ReplicaSpec {
   version: 1;
-  source: 'figma-rest';
+  source: 'figma-rest' | 'html';
   file?: { key?: string; name?: string; lastModified?: string };
   node: { id: string; name: string; type: string };
   canvas: { width: number; height: number; background?: string };

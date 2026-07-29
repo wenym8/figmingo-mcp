@@ -57,21 +57,28 @@ function substitute(value, vars) {
     }
     return value;
 }
-async function loadFont(fontName) {
+async function loadFont(fontName, fallbackStyles) {
     const font = fontName ?? { family: 'Inter', style: 'Regular' };
     try {
         await figma.loadFontAsync(font);
-        return font;
+        return { font, fallback: undefined };
     }
     catch {
-        const fallbacks = [
-            { family: font.family, style: 'Regular' },
-            { family: 'Inter', style: 'Regular' },
-        ];
-        for (const f of fallbacks) {
+        const attempts = [];
+        // Same-family nearest styles first (e.g. SemiBold → Medium/Bold/Regular),
+        // then family Regular, then Inter Regular as the floor.
+        for (const style of fallbackStyles ?? [])
+            attempts.push({ family: font.family, style });
+        attempts.push({ family: font.family, style: 'Regular' }, { family: 'Inter', style: 'Regular' });
+        const seen = new Set([`${font.family} ${font.style}`]);
+        for (const f of attempts) {
+            const key = `${f.family} ${f.style}`;
+            if (seen.has(key))
+                continue;
+            seen.add(key);
             try {
                 await figma.loadFontAsync(f);
-                return f;
+                return { font: f, fallback: `requested ${font.family} ${font.style} unavailable` };
             }
             catch {
                 /* try next */
@@ -79,6 +86,29 @@ async function loadFont(fontName) {
         }
         throw new Error(`font unavailable: ${font.family} ${font.style}`);
     }
+}
+/** Uniform number or [topLeft, topRight, bottomRight, bottomLeft]. */
+function applyCornerRadius(node, radius) {
+    if (Array.isArray(radius)) {
+        const [tl, tr, br, bl] = radius.map((v) => Math.max(0, Number(v) || 0));
+        node.topLeftRadius = tl;
+        node.topRightRadius = tr;
+        node.bottomRightRadius = br;
+        node.bottomLeftRadius = bl;
+    }
+    else if (typeof radius === 'number' && Number.isFinite(radius)) {
+        node.cornerRadius = Math.max(0, radius);
+    }
+}
+function applyStroke(node, params) {
+    if (params.strokes !== undefined)
+        node.strokes = params.strokes;
+    if (params.strokeWeight !== undefined)
+        node.strokeWeight = params.strokeWeight;
+    if (params.strokeAlign !== undefined)
+        node.strokeAlign = params.strokeAlign;
+    if (params.dashPattern !== undefined)
+        node.dashPattern = params.dashPattern;
 }
 function applyFills(node, fills) {
     if (Array.isArray(fills))
@@ -103,13 +133,14 @@ const handlers = {
         if (params.clipsContent !== undefined)
             frame.clipsContent = !!params.clipsContent;
         if (params.cornerRadius !== undefined)
-            frame.cornerRadius = params.cornerRadius;
+            applyCornerRadius(frame, params.cornerRadius);
         if (params.opacity !== undefined)
             frame.opacity = params.opacity;
         if (params.effects)
             frame.effects = params.effects;
         if (params.fills)
             applyFills(frame, params.fills);
+        applyStroke(frame, params);
         applyRotation(frame, params.rotation);
         if (params.autoLayout)
             await handlers.set_auto_layout({ nodeId: frame.id, ...params.autoLayout }, vars);
@@ -117,7 +148,7 @@ const handlers = {
     },
     async create_text(params, vars) {
         const parent = parentOf(params, vars);
-        const font = await loadFont(params.fontName);
+        const { font, fallback } = await loadFont(params.fontName, params.fallbackStyles);
         const text = figma.createText();
         parent.appendChild(text);
         text.fontName = font;
@@ -137,13 +168,15 @@ const handlers = {
             text.textAlignHorizontal = params.textAlignHorizontal;
         if (params.textAlignVertical)
             text.textAlignVertical = params.textAlignVertical;
+        if (params.opacity !== undefined)
+            text.opacity = params.opacity;
         if (params.fills)
             applyFills(text, params.fills);
         if (params.width || params.height) {
             text.textAutoResize = 'NONE';
             text.resize(Math.max(1, params.width ?? text.width), Math.max(1, params.height ?? text.height));
         }
-        return { nodeId: text.id, fontApplied: font };
+        return { nodeId: text.id, fontApplied: font, ...(fallback ? { fontFallback: fallback } : {}) };
     },
     async create_rectangle(params, vars) {
         const parent = parentOf(params, vars);
@@ -154,13 +187,14 @@ const handlers = {
         rect.y = params.y ?? 0;
         rect.resize(Math.max(1, params.width ?? 100), Math.max(1, params.height ?? 100));
         if (params.cornerRadius !== undefined)
-            rect.cornerRadius = params.cornerRadius;
+            applyCornerRadius(rect, params.cornerRadius);
         if (params.opacity !== undefined)
             rect.opacity = params.opacity;
         if (params.effects)
             rect.effects = params.effects;
         if (params.fills)
             applyFills(rect, params.fills);
+        applyStroke(rect, params);
         applyRotation(rect, params.rotation);
         return { nodeId: rect.id };
     },
@@ -168,8 +202,20 @@ const handlers = {
         const node = findNode(params.nodeId);
         if (!('fills' in node))
             throw new Error(`node ${params.nodeId} has no fills`);
-        node.fills = params.fills ?? [];
-        return { nodeId: node.id };
+        const requested = params.fills ?? [];
+        node.fills = requested;
+        // Bridge quirk guard: some nodes (observed on certain top-level frames)
+        // report ok but silently keep their previous fills. Read back and warn.
+        let warning;
+        try {
+            if (JSON.stringify(node.fills) !== JSON.stringify(requested)) {
+                warning = `set_fills did not stick on ${node.id} (${node.type}): Figma kept the previous fills`;
+            }
+        }
+        catch {
+            /* fills not serializable (mixed values) — skip verification */
+        }
+        return { nodeId: node.id, ...(warning ? { warning } : {}) };
     },
     async set_effects(params) {
         const node = findNode(params.nodeId);
@@ -227,6 +273,15 @@ const handlers = {
     async insert_image(params, vars) {
         const parent = parentOf(params, vars);
         const bytes = figma.base64Decode(params.bytesBase64);
+        // figma.createImage only accepts raster bytes (PNG/JPG/GIF/WebP). SVG
+        // payloads decode "successfully" but render as grey boxes — reject early.
+        let head = '';
+        const sniff = Math.min(bytes.length, 256);
+        for (let i = 0; i < sniff; i++)
+            head += String.fromCharCode(bytes[i]);
+        if (/^\s*</.test(head) && /<svg[\s>]/i.test(head)) {
+            throw new Error('insert_image: SVG payloads are not supported by figma.createImage (rasterize the SVG to PNG first)');
+        }
         const image = figma.createImage(bytes);
         const rect = figma.createRectangle();
         rect.name = params.name ?? 'Image';
@@ -234,6 +289,11 @@ const handlers = {
         rect.x = params.x ?? 0;
         rect.y = params.y ?? 0;
         rect.resize(Math.max(1, params.width ?? 100), Math.max(1, params.height ?? 100));
+        if (params.cornerRadius !== undefined)
+            applyCornerRadius(rect, params.cornerRadius);
+        if (params.opacity !== undefined)
+            rect.opacity = params.opacity;
+        applyStroke(rect, params);
         rect.fills = [{ type: 'IMAGE', imageHash: image.hash, scaleMode: params.scaleMode ?? 'FILL' }];
         return { nodeId: rect.id, imageHash: image.hash };
     },

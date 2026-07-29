@@ -82,9 +82,19 @@ export type PluginCommandName = (typeof PLUGIN_COMMANDS)[number];
 /**
  * Command parameter notes (the plugin accepts these loose JSON params):
  * - create_frame / create_rectangle: x, y, width, height, name, fills, effects,
- *   opacity, cornerRadius, parentId (or "$var" batch ref), plus `rotation`
- *   (DEGREES, converted to radians for node.rotation). create_frame also takes
+ *   opacity, parentId (or "$var" batch ref), plus `rotation` (DEGREES,
+ *   converted to radians for node.rotation), `cornerRadius` (uniform number or
+ *   [topLeft, topRight, bottomRight, bottomLeft]), and stroke params
+ *   (strokes, strokeWeight, strokeAlign, dashPattern). create_frame also takes
  *   clipsContent and autoLayout.
+ * - create_text: fontName {family, style} plus optional `fallbackStyles`
+ *   (same-family style names tried in order when the requested style fails to
+ *   load); the result reports `fontApplied` and `fontFallback` so callers can
+ *   surface degradations instead of silently landing on Regular.
+ * - insert_image: bytesBase64 (raster only — SVG payloads are rejected with an
+ *   explicit error), scaleMode, cornerRadius, stroke params, opacity.
+ * - set_fills / set_effects: nodeId + payload; set_fills reads the fills back
+ *   and returns a `warning` when Figma silently kept the previous value.
  * - export_node: nodeId, format (PNG|JPG|SVG|PDF), scale. Returns base64 by
  *   default; pass an absolute `outPath` to have the SERVER write the bytes to
  *   disk and return { path, bytes } instead of inline base64.

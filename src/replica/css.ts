@@ -207,3 +207,61 @@ export function textAlignFromStyle(style: { textAlign?: string }): 'LEFT' | 'RIG
   };
   return style.textAlign ? map[style.textAlign] : undefined;
 }
+
+export interface CssShadow {
+  inset: boolean;
+  offsetX: number;
+  offsetY: number;
+  blur: number;
+  spread: number;
+  color: CssColor;
+}
+
+/**
+ * Parse a CSS box-shadow string into shadow entries (best effort).
+ * Handles the computed-style form `rgba(r,g,b,a) Xpx Ypx Bpx Spx [inset]`
+ * (color first) as well as the authored form `Xpx Ypx Bpx color`.
+ * Returns [] for 'none' / unparseable input.
+ */
+export function parseBoxShadow(str: string | undefined | null): CssShadow[] {
+  if (!str) return [];
+  const s = str.trim();
+  if (!s || s === 'none') return [];
+  const out: CssShadow[] = [];
+  for (const part of splitTopLevel(s)) {
+    const inset = /\binset\b/i.test(part);
+    const cleaned = part.replace(/\binset\b/gi, '').trim();
+    const colorMatch = cleaned.match(/rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}/);
+    const color = colorMatch ? parseCssColor(colorMatch[0]) : null;
+    const withoutColor = colorMatch ? cleaned.replace(colorMatch[0], ' ') : cleaned;
+    const nums = (withoutColor.match(/-?[\d.]+px/g) ?? []).map((v) => parseFloat(v));
+    if (!color || nums.length < 2) continue;
+    out.push({ inset, offsetX: nums[0], offsetY: nums[1], blur: nums[2] ?? 0, spread: nums[3] ?? 0, color });
+  }
+  return out;
+}
+
+/** Figma Effect[] from parsed CSS shadows (DROP_SHADOW / INNER_SHADOW for inset). */
+export function shadowEffects(shadows: CssShadow[]) {
+  return shadows.map((s) => ({
+    type: s.inset ? 'INNER_SHADOW' : 'DROP_SHADOW',
+    color: { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a ?? 1 },
+    offset: { x: s.offsetX, y: s.offsetY },
+    radius: s.blur,
+    spread: s.spread,
+    visible: true,
+    blendMode: 'NORMAL',
+  }));
+}
+
+/**
+ * Ordered fallback Figma style names for a CSS weight when the exact style
+ * fails to load: nearest weights first, Regular as the floor.
+ */
+export function fontFallbackChain(weight?: number): string[] {
+  const order = [400, 500, 300, 600, 700, 200, 800, 100, 900];
+  const w = weight && FONT_WEIGHT_MAP[weight] ? weight : 400;
+  const rest = order.filter((x) => x !== w).sort((a, b) => Math.abs(a - w) - Math.abs(b - w));
+  const chain = [w, ...rest].map((x) => FONT_WEIGHT_MAP[x]);
+  return Array.from(new Set(chain));
+}

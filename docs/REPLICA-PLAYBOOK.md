@@ -191,3 +191,16 @@ judge 建议、尚未实现的工具增强（按价值排序）：
 
 1. **非文字带 diff 可归零**：纯色块、描边、阴影这类非文字元素，只要几何和颜色量对了，diffRatio 能收到 0——非文字带还有残余 diff 时，不要归因于"渲染差异"，回去量几何/取色。
 2. **< 0.6% 且纯 AA 描边即收敛**：总 diffRatio 低于 0.6%、且 diff 图上残余只是环状细边（antiAliasPixels 解释了绝大部分）时，判定收敛、停手交付——继续调参是负收益。
+
+---
+
+## D. HTML → Figma 直达链路（extractHtmlSpec，C5 之后）
+
+`import_html_replica` 现在可以直接吃 HTML，不必再手写 ReplicaSpec：
+
+- `htmlPath` / `htmlUrl` → 内置提取器（`src/replica/extractHtmlSpec.ts`，headless Chromium walk DOM + computed style）自动生成 spec 再导入；`spec`/`specPath` 手写路径保留，二者互斥。
+- `x`/`y` 控制主 frame 落点，不用事后 `move_node`。
+- 提取规则与样式映射（圆角/描边/阴影/渐变/webfont/隐藏元素跳过）见 `extractHtmlSpec.ts` 顶部注释；提取结果可用 `outSpecPath` 落盘检查。
+- 导入器已原生支持：`borderRadius`（单值/四角）、`border`→strokes、`boxShadow`→DROP_SHADOW/INNER_SHADOW、图片 `cornerRadius`、嵌套容器递归、无填充透明容器保留。
+- **所有降级都进返回值的 `warnings` 数组**：字体回退（如 SemiBold→Medium）、SVG 素材（`figma.createImage` 不支持矢量字节，会占位并提示先栅格化）、图片加载失败、非均匀边框。交付前检查 `warnings`，不要把占位灰块当成完成态。
+- 结果 `stats.created` 是插件确认成功的节点数，可与 `stats` 各项对账。

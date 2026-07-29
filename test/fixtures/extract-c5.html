@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1024px; height:1470px; }
+  body {
+    background:#010207;
+    font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;
+    position:relative;
+    overflow:hidden;
+  }
+  /* status bar */
+  .sb-time { position:absolute; left:79px; top:21px; font-size:36px; font-weight:600; color:#fff; letter-spacing:1px; }
+  .sb-icons { position:absolute; left:793px; top:30px; width:172px; height:27px; }
+  /* sheet */
+  .sheet {
+    position:absolute; left:29px; top:85px; width:966px; height:1385px;
+    background:linear-gradient(180deg,#0d0d21 0%,#14102e 42%,#0d0e20 100%);
+    border-radius:36px 36px 0 0;
+  }
+  .handle { position:absolute; left:470px; top:121px; width:90px; height:13px; background:#47455c; border-radius:7px; }
+  .chevron { position:absolute; left:82px; top:138px; width:36px; height:22px; }
+  .dots { position:absolute; left:926px; top:130px; width:8px; height:39px; }
+  /* album art */
+  .art {
+    position:absolute; left:149px; top:182px; width:722px; height:720px;
+    border-radius:30px; overflow:hidden;
+  }
+  .art img { width:722px; height:720px; object-fit:fill; display:block; }
+  /* title / artist */
+  .title { position:absolute; left:108px; top:969px; font-size:55px; font-weight:700; color:#fafafa; line-height:60px; letter-spacing:-0.3px; }
+  .artist { position:absolute; left:108px; top:1041px; font-size:30px; font-weight:400; color:#8e8d9a; line-height:34px; letter-spacing:1.2px; }
+  .heart-btn {
+    position:absolute; left:830px; top:971px; width:88px; height:88px;
+    border:2px solid #4a4658; border-radius:50%;
+  }
+  .heart-btn svg { position:absolute; left:24px; top:25px; width:36px; height:34px; }
+  /* progress */
+  .track { position:absolute; left:110px; top:1121px; width:805px; height:8px; background:#2a293b; border-radius:4px; }
+  .fill { position:absolute; left:110px; top:1121px; width:298px; height:8px; background:#b940f9; border-radius:4px; }
+  .thumb { position:absolute; left:408px; top:1112px; width:26px; height:26px; background:#9747f0; border-radius:50%; }
+  .t-cur { position:absolute; left:108px; top:1152px; font-size:24px; font-weight:500; color:#8e8d9a; }
+  .t-tot { position:absolute; left:860px; top:1152px; width:55px; text-align:right; font-size:24px; font-weight:500; color:#8e8d9a; }
+  /* controls */
+  .ctl { position:absolute; }
+  .shuffle { left:112px; top:1243px; width:60px; height:50px; }
+  .prev { left:288px; top:1238px; width:54px; height:58px; }
+  .play { position:absolute; left:431px; top:1185px; width:161px; height:161px; background:#833ee9; border-radius:50%; }
+  .play svg { position:absolute; left:58px; top:51px; width:56px; height:60px; }
+  .next { left:679px; top:1238px; width:54px; height:58px; }
+  .repeat { left:848px; top:1243px; width:62px; height:50px; }
+  /* volume */
+  .vol-l { position:absolute; left:114px; top:1398px; width:34px; height:34px; }
+  .vol-track { position:absolute; left:195px; top:1412px; width:635px; height:6px; background:#27243a; border-radius:3px; }
+  .vol-fill { position:absolute; left:195px; top:1412px; width:336px; height:6px; background:#843aed; border-radius:3px; }
+  .vol-thumb { position:absolute; left:531px; top:1399px; width:32px; height:32px; background:#fff; border-radius:50%; }
+  .vol-r { position:absolute; left:869px; top:1395px; width:46px; height:40px; }
+</style>
+</head>
+<body>
+  <div class="sb-time">9:41</div>
+  <svg class="sb-icons" viewBox="0 0 172 27" fill="none">
+    <!-- signal bars -->
+    <rect x="0" y="15" width="7" height="12" rx="2" fill="#fff"/>
+    <rect x="11" y="10" width="7" height="17" rx="2" fill="#fff"/>
+    <rect x="22" y="5" width="7" height="22" rx="2" fill="#fff"/>
+    <rect x="33" y="0" width="7" height="27" rx="2" fill="#fff"/>
+    <!-- wifi -->
+    <g stroke="#fff" stroke-width="4" stroke-linecap="round" fill="none">
+      <path d="M 57 17 A 12 12 0 0 1 81 17"/>
+      <path d="M 61 21 A 7 7 0 0 1 77 21"/>
+    </g>
+    <circle cx="69" cy="25" r="2.6" fill="#fff"/>
+    <!-- battery -->
+    <rect x="112" y="0" width="52" height="27" rx="7" fill="#fff"/>
+    <text x="138" y="20" font-family="-apple-system,Helvetica,Arial" font-size="18" font-weight="700" fill="#010207" text-anchor="middle">100</text>
+    <rect x="166" y="9" width="5" height="10" rx="2.5" fill="#fff"/>
+  </svg>
+
+  <div class="sheet"></div>
+  <div class="handle"></div>
+
+  <svg class="chevron" viewBox="0 0 36 22" fill="none">
+    <path d="M 4 4 L 18 18 L 32 4" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+
+  <svg class="dots" viewBox="0 0 8 39">
+    <circle cx="4" cy="3.5" r="3.6" fill="#fff"/>
+    <circle cx="4" cy="19.5" r="3.6" fill="#fff"/>
+    <circle cx="4" cy="35.5" r="3.6" fill="#fff"/>
+  </svg>
+
+  <div class="art"><img src="album-art.png" alt=""></div>
+
+  <div class="title">Midnight Drive</div>
+  <div class="artist">Neon Waves</div>
+  <div class="heart-btn">
+    <svg viewBox="0 0 36 34" fill="none">
+      <path d="M18 31 C 10 24 2 18 2 10.5 C 2 5.5 6 2 10.5 2 C 13.8 2 16.5 4 18 6.6 C 19.5 4 22.2 2 25.5 2 C 30 2 34 5.5 34 10.5 C 34 18 26 24 18 31 Z"
+        stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/>
+    </svg>
+  </div>
+
+  <div class="track"></div>
+  <div class="fill"></div>
+  <div class="thumb"></div>
+  <div class="t-cur">1:24</div>
+  <div class="t-tot">3:45</div>
+
+  <svg class="ctl shuffle" viewBox="0 0 60 50" fill="none" stroke="#9a9ba3" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 10 H 16 C 26 10 34 40 44 40 H 54"/>
+    <path d="M4 40 H 16 C 21 40 25 34 29 28"/>
+    <path d="M38 22 C 42 15 46 10 54 10"/>
+    <path d="M48 4 L 56 10 L 48 16"/>
+    <path d="M48 34 L 56 40 L 48 46"/>
+  </svg>
+  <svg class="ctl prev" viewBox="0 0 54 58">
+    <rect x="4" y="6" width="8" height="46" rx="3" fill="#fff"/>
+    <path d="M 46 8 L 18 29 L 46 50 Z" fill="#fff"/>
+  </svg>
+  <div class="play">
+    <svg viewBox="0 0 56 60"><path d="M 8 6 L 50 30 L 8 54 Z" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/></svg>
+  </div>
+  <svg class="ctl next" viewBox="0 0 54 58">
+    <path d="M 8 8 L 36 29 L 8 50 Z" fill="#fff"/>
+    <rect x="42" y="6" width="8" height="46" rx="3" fill="#fff"/>
+  </svg>
+  <svg class="ctl repeat" viewBox="0 0 62 50" fill="none" stroke="#9a9ba3" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 20 C 8 12 13 8 20 8 H 50"/>
+    <path d="M44 2 L 52 8 L 44 14"/>
+    <path d="M54 30 C 54 38 49 42 42 42 H 12"/>
+    <path d="M18 36 L 10 42 L 18 48"/>
+  </svg>
+
+  <svg class="vol-l" viewBox="0 0 34 34">
+    <path d="M 4 12 H 10 L 18 5 V 29 L 10 22 H 4 Z" fill="#9a9ba3"/>
+  </svg>
+  <div class="vol-track"></div>
+  <div class="vol-fill"></div>
+  <div class="vol-thumb"></div>
+  <svg class="vol-r" viewBox="0 0 46 40" fill="none">
+    <path d="M 4 14 H 10 L 18 7 V 33 L 10 26 H 4 Z" fill="#9a9ba3"/>
+    <path d="M 24 13 A 9 9 0 0 1 24 27" stroke="#9a9ba3" stroke-width="3.4" stroke-linecap="round"/>
+    <path d="M 29 8 A 16 16 0 0 1 29 32" stroke="#9a9ba3" stroke-width="3.4" stroke-linecap="round"/>
+  </svg>
+</body>
+</html>

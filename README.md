@@ -151,7 +151,7 @@ Everything brand-specific is parameterized via options:
 |---|---|
 | `bridge_status` | Plugin connected? queue size, client info, supported commands. |
 | `execute_plugin_command` | Generic envelope: `create_frame`, `create_text`, `create_rectangle`, `set_fills`, `set_auto_layout`, `insert_image`, `move_node`, `resize_node`, `delete_node`, `get_selection`, `export_node` — plus `commands: [...]` batches (sequential, `$var` node-id refs). Queued (bounded) while disconnected; heartbeat-based timeouts (see below). `create_frame`/`create_rectangle` accept `rotation` (degrees); `export_node` accepts `params.outPath` to save bytes to disk. |
-| `import_html_replica` | High-level: rebuild a replica spec as native Figma frames — main frame → section frames → text/image/svg/background nodes. `dryRun` previews the command plan. |
+| `import_html_replica` | High-level: rebuild a replica spec as native Figma frames — main frame → section frames → nested containers / text / image nodes. Give it an HTML file (`htmlPath`) or URL (`htmlUrl`) and it extracts layout + computed styles with headless Chromium first (border-radius, borders, shadows, gradients, webfonts, real image bytes), or pass a ready-made spec (`spec`/`specPath`). `x`/`y` set the main frame landing spot; `dryRun` previews the command plan; degradations (missing fonts, SVG assets, failed images) come back in `warnings`. |
 
 The companion plugin (`plugin/`) connects to the MCP server at
 `ws://127.0.0.1:39220`. Import once: **Figma desktop → Plugins → Development →
