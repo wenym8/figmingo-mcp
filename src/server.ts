@@ -9,7 +9,7 @@ import { allTools } from './tools';
 import type { ToolContext } from './tools/common';
 
 export const SERVER_NAME = 'figmingo-mcp';
-export const SERVER_VERSION = '0.1.2';
+export const SERVER_VERSION = '0.1.4';
 
 /**
  * Server-level usage guidance, sent to the MCP client in the initialize
