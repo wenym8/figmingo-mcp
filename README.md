@@ -11,7 +11,7 @@ MCP on **free** Figma plans (Personal Access Token + public REST API — no seat
 quotas, no monthly caps), HTML 1:1 replica tooling with built-in three-gate
 acceptance, and write-to-canvas through a companion plugin bridge.
 
-[中文快速上手 →](#中文快速上手)
+[中文文档 →](#中文文档)
 
 ## Architecture
 
@@ -297,35 +297,177 @@ acceptance plan.
 
 ---
 
-## 中文快速上手
+## 中文文档
 
-1. **安装**（macOS / Linux）：
+**本地优先的 Figma MCP 服务器**：免费 Figma 套餐也能跑全部读取能力（Personal Access Token + 公开 REST API，无席位配额、无月度上限）；HTML 1:1 复刻工具链（内置三关验收）；通过伴侣插件桥把内容写回画布。
 
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.sh | bash
-   ```
+### 架构
 
-   Windows 用 `scripts/install.ps1`。安装器会检测 Node ≥ 18、全局安装包、写入
-   Cursor / Claude Code / Claude Desktop / VS Code / Kimi CLI（`~/.kimi/mcp.json`）/
-   Codex CLI（`~/.codex/config.toml`，TOML，只改 `[mcp_servers.figmingo]` 段并自动备份）
-   的 MCP 配置，并把伴侣插件复制到 `~/.figmingo/plugin`。
+```mermaid
+flowchart LR
+    subgraph clients["AI 客户端"]
+        A["Cursor · Claude Code · Claude Desktop<br/>VS Code · Kimi CLI · Codex"]
+    end
+    A -- "stdio / Streamable HTTP" --> B["figmingo-mcp<br/>本地服务器"]
+    B -- "REST + Personal Access Token" --> C[("Figma REST API<br/>（免费套餐可用）")]
+    B <-- "WebSocket ws://127.0.0.1:39220" --> D["伴侣插件<br/>（Figma 桌面端）"]
+    D -- "Plugin API 写入" --> E[("你的画布")]
+    B --- F[("磁盘缓存<br/>文档 15 分钟 · 渲染图 30 天")]
 
-2. **获取 Figma PAT**：Figma → 设置 → 安全 → Personal access tokens → 生成新 token
-   （读工具只需读权限）。写进 MCP 配置的 `env.FIGMA_API_KEY`，或导出环境变量。
+    style B fill:#6e56cf,color:#fff
+    style D fill:#0d9e6e,color:#fff
+```
 
-3. **重启 AI 客户端**，让它调用 `whoami` 验证连通性。
+一切都在**你自己的机器**上运行：没有中转服务器，除了调用 `api.figma.com`，数据不出本机。
 
-4. **常用流程**：
-   - 读设计：`get_design_context` / `get_metadata` / `get_screenshot`（传 `url` 即可，自动解析 `node-id`）。
-   - HTML 1:1 复刻：`get_html_replica_spec` 生成 spec → 手写/生成 HTML →
-     `verify_html_parity` 跑三关验收（文案/字体/颜色 ±容差、结构 ±4px、像素 diff ≤ 1%），
-     产出 `report.json` 和 diff 图。
-   - 写回画布：Figma 桌面端 **插件 → 开发 → 导入 plugin/manifest.json** 并保持运行
-     （code.js 沙箱无法开 WebSocket，连接由插件 UI iframe 持有，面板会显示 ●已连接/○连接中/✕失败），
-     然后 `import_html_replica`（先 `dryRun` 预览）或 `execute_plugin_command`。
+### 与其他方案对比
 
-5. **免费套餐**：全部读工具 + 写工具均可用；variables 接口是 Enterprise 限定，
-   403 时自动降级为 styles + 推导 tokens（输出带 `source` 标记）。
+| 能力 | 官方 Figma MCP | Framelink (figma-developer-mcp) | figmingo-mcp |
+|---|---|---|---|
+| 免费套餐读取配额 | 约 6 次/月（更多需 Dev 席位） | 无限（REST + PAT） | **无限（REST + PAT）** |
+| 精简设计上下文 | ✅ | ✅ | ✅（+ 绝对坐标、auto-layout、效果） |
+| 元数据树（XML/JSON） | ✅ | 部分 | ✅ |
+| 截图（节点 → png/jpg/svg/pdf） | ✅ | ❌ | ✅ |
+| 资产下载（节点 + 原始图片填充） | ✅ | 部分 | ✅ + 清单 |
+| Variables / 设计 tokens | ✅（Enterprise API） | ❌ | ✅ 免费套餐降级方案（styles + 推导，标 `source`） |
+| 设计系统搜索 | ✅ | ❌ | ✅ 本地索引 |
+| Code Connect 映射 | ✅（服务端） | ❌ | ✅ 本地 `figmingo.components.json` |
+| whoami / 限流 / 缓存状态 | ❌ | ❌ | ✅ |
+| HTML 1:1 复刻 spec | ❌ | ❌ | ✅ |
+| Playwright HTML 截图 | ❌ | ❌ | ✅ |
+| 三关验收（内容/结构/视觉） | ❌ | ❌ | ✅ |
+| 写回画布 | ❌ | ❌ | ✅ 伴侣插件桥 |
+| 磁盘缓存（TTL） | ❌ | ❌ | ✅ 文档 15 分钟 / 渲染图 30 天 |
 
-6. **验收**：`npm test`（176 单测全绿）；真实 API 验收：
-   `FIGMA_API_KEY=xxx TEST_FILE_KEY=xxx npm run accept`，逐项打勾/打叉/跳过。
+### 安装
+
+一条命令（macOS / Linux）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.sh | bash
+```
+
+Windows（PowerShell）：
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.ps1 | iex
+```
+
+安装器会：检测 Node ≥ 18 → 全局安装包 → 安装 Playwright Chromium（约 170MB，一次性，HTML 渲染/提取/对比工具需要）→ 写入 **Cursor**（`~/.cursor/mcp.json`）、**Claude Code**（`~/.claude.json`）、**Claude Desktop**、**VS Code**、**Kimi CLI**（`~/.kimi/mcp.json`）、**Codex CLI**（`~/.codex/config.toml`，TOML，只改 `[mcp_servers.figmingo]` 段，原文件备份为 `config.toml.figmingo-bak`）的 MCP 配置 → 把伴侣插件（manifest + code.js + ui.html）复制到 `~/.figmingo/plugin` → 打印后续指引。重复运行幂等，不会清掉已配置的 Figma token。
+
+装完运行 `figmingo-mcp doctor` 自检整个环境（Node、token 有效性、Chromium、插件文件与版本漂移、客户端配置项、桥端口）——每项打印 ✓/✗ 并附修复提示，全部通过时退出码才为 0。
+
+手动配置（任意客户端）：
+
+```json
+{
+  "mcpServers": {
+    "figmingo": {
+      "command": "npx",
+      "args": ["-y", "figmingo-mcp"],
+      "env": { "FIGMA_API_KEY": "figd_..." }
+    }
+  }
+}
+```
+
+获取 PAT：**Figma → 设置 → 安全 → Personal access tokens → 生成新 token**（读工具只需读权限）。
+
+### 用法
+
+```bash
+figmingo-mcp                      # stdio 传输（默认，AI 客户端用这个）
+figmingo-mcp --http --port 3845   # Streamable HTTP：http://127.0.0.1:3845/mcp
+figmingo-mcp cache-clear          # 清空 ~/.figmingo/cache
+figmingo-mcp doctor               # 环境自检
+figmingo-mcp --help
+```
+
+### 15 个工具
+
+**读取工具（REST + PAT，免费套餐可用）**：`whoami`（token 自检 + 限流/缓存状态）· `get_design_context`（精简节点树：绝对坐标、auto-layout、填充/描边/效果、文字样式）· `get_metadata`（轻量树，XML/JSON，深取前先定位）· `get_screenshot`（节点渲染图，scale 0.01–4，png/jpg/svg/pdf）· `download_assets`（批量导出节点 + 原始图片填充，带清单）· `get_variable_defs`（variables 接口 403 时降级 styles + 推导 tokens，标 `source`）· `search_design_system`（本地索引查组件/样式）· `get_code_connect_map`（组件→代码映射）。
+
+所有读取工具都接受 `fileKey` 或完整 `url`（自动解析 `node-id`）。
+
+**复刻工具（差异化能力）**：`get_html_replica_spec`（复刻专用文档：绝对矩形、计算后的字体排版、hex+alpha 颜色、渐变、资产清单）· `render_html_screenshot`（Playwright 截图 URL/本地 HTML/HTML 字符串）· `verify_html_parity`（验收闸门：内容关文案/字体/颜色、结构关 ±4px、视觉关像素 diff ≤ 1%，产出 `report.json` + diff 图）· `compare_html_to_image`（一键视觉 diff，bands 分带定位差异，AA 像素单独记账）。
+
+容差（生产验证过的内部工具移植）：
+
+```
+POS_TOL = 4        FONT_SIZE_TOL = 1      LS_TOL = 0.5
+LH_TOL  = 2        COLOR_TOL     = 2/255  VISUAL_MAX_RATIO = 0.01（裁切 ≤ 2px）
+```
+
+**写入工具（伴侣插件桥）**：`bridge_status`（桥连接状态）· `execute_plugin_command`（14 种命令 + `commands: [...]` 批次，顺序执行，`$var` 节点引用，心跳超时机制）· `import_html_replica`（HTML 文件/URL 一键直导为原生 Figma frames，Chromium 提取布局与计算样式，`dryRun` 预览，降级进 `warnings`）。
+
+插件连接 `ws://127.0.0.1:39220`。导入一次：**Figma 桌面端 → 插件 → 开发 → Import plugin from manifest…** → 选 `~/.figmingo/plugin/manifest.json`，保持运行即可。免费套餐可用——写入不占用 REST 配额。
+
+架构说明：Figma 插件沙箱（code.js）无法开 WebSocket，所以连接由插件的 **UI iframe**（ui.html）持有，命令经 `postMessage` 在 iframe 与沙箱间转发。UI 有状态面板（● 已连接 / ○ 连接中 / ✕ 失败原因、服务器地址、已执行命令数）。
+
+**批次语义**：插件顺序执行，每条命令（无论成败）后都发 `progress` 心跳。服务器没有 30s 硬顶：**空闲超时**（`idleTimeoutMs`，默认 20s，心跳即重置）+ **总上限**（`timeoutMs`，默认 5 分钟，可每次调用自设）。批次结果带逐命令 `results` 数组；超时错误会列出**已确认落画布的命令索引**，重试前先用 `get_page_children` 看画布现状。
+
+### 复刻闭环
+
+```mermaid
+flowchart LR
+    F["Figma 设计稿<br/>（或任意参考图）"] -- "get_html_replica_spec" --> S["复刻 spec<br/>（绝对矩形、计算排版、<br/>资产清单）"]
+    S --> H["HTML / CSS"]
+    H -- "render_html_screenshot" --> R["Chromium 渲染"]
+    R -- "verify_html_parity · compare_html_to_image" --> G{"三关验收<br/>内容 · 结构 ±4px · 视觉 ≤ 1%"}
+    G -- "bands 分带定位差异" --> H
+    G -- "通过" --> I["import_html_replica"]
+    I -- "插件桥 · 确定性（MD5 验证）" --> C["原生 Figma frames"]
+
+    style G fill:#b7791f,color:#fff
+    style C fill:#0d9e6e,color:#fff
+```
+
+做 HTML 复刻先读 [docs/REPLICA-PLAYBOOK.md](docs/REPLICA-PLAYBOOK.md)——六轮带评分实战沉淀的 6 步流程（先量后写 CSS、字体锁定、bandEdges 驱动迭代、单变量改动、收敛判据）、diff 图读法、工具速查表、防抄漏清单。让你的下一次复刻 3–4 轮收敛，而不是 7 轮。
+
+### 免费套餐可用性
+
+| 能力 | 免费套餐 |
+|---|---|
+| 全部读取工具 | ✅ PAT + 公开 REST；仅有每分钟限流（429 自动退避） |
+| `get_variable_defs` | ✅ 降级方案（`source: styles+inferred`）；原始 variables 接口是 Enterprise 限定，返回 403 |
+| 写入工具 | ✅ 插件 API 无套餐门槛 |
+| MCP 客户端 | ✅ 任意支持 MCP 的客户端（官方 Figma 桌面 MCP 有套餐门槛，本服务器没有） |
+
+### 验收
+
+六轮带评分的复刻挑战实测（独立 judge agent 从零复测，非自报数据）：
+
+| 题目 | 分数 | 像素 diff | 备注 |
+|---|---|---|---|
+| C1 韩国攻略信息图 | 91 | 2.46 % | PASS |
+| C2 百度首页 | 93 | 1.96 % | PASS |
+| C3 Kimi 设置弹窗 | 93 | 0.51 % | PASS |
+| C4 FAQ 手风琴（3 状态） | 93 | 0.46–0.58 % | PASS |
+| C5 音乐播放器（图片 → HTML → Figma） | 92 | 0.87 % | PASS，30 节点导入 MD5 确定性 |
+| C6 SaaS 落地页（1440×4148，7 个 section） | 84 | 0.58 % | PASS，279 节点一键直导、零手工补丁、MD5 可复现 |
+
+```bash
+npm install
+npm run build
+npm test            # 176 个单元测试（vitest，录制 fixtures）
+
+# 真实 API 验收：
+FIGMA_API_KEY=<pat> TEST_FILE_KEY=<file-key> [TEST_NODE_ID=1:2] npm run accept
+```
+
+`npm run accept` 逐个工具打 ✅ / ⏭️ / ❌；token/fileKey 缺失时优雅退出并给指引；插件未连接时写工具报 **SKIP**（不是 FAIL）。
+
+### 开发
+
+```bash
+npm run build         # tsup（dist/）+ tsc（plugin/code.js）
+npm run typecheck     # 严格 tsc --noEmit
+npm test              # vitest
+npm run accept        # 真实 API 验收清单
+```
+
+仓库结构见 [ARCHITECTURE.md](ARCHITECTURE.md)——工具清单、REST 事实、缓存、桥协议、验收方案的权威文档。
+
+### License
+
+[MIT](LICENSE)
