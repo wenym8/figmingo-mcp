@@ -3,6 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/figmingo-mcp.svg)](https://www.npmjs.com/package/figmingo-mcp)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-176%20passed-brightgreen.svg)](#development)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20streamable%20http-purple.svg)](https://modelcontextprotocol.io)
 
 **Local-first Figma MCP server.** Full read-side parity with the official Figma
@@ -11,6 +12,26 @@ quotas, no monthly caps), HTML 1:1 replica tooling with built-in three-gate
 acceptance, and write-to-canvas through a companion plugin bridge.
 
 [中文快速上手 →](#中文快速上手)
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph clients["AI clients"]
+        A["Cursor · Claude Code · Claude Desktop<br/>VS Code · Kimi CLI · Codex"]
+    end
+    A -- "stdio / Streamable HTTP" --> B["figmingo-mcp<br/>local server"]
+    B -- "REST + Personal Access Token" --> C[("Figma REST API<br/>(free plan OK)")]
+    B <-- "WebSocket ws://127.0.0.1:39220" --> D["companion plugin<br/>(Figma desktop)"]
+    D -- "Plugin API writes" --> E[("Your canvas")]
+    B --- F[("disk cache<br/>docs 15 min · renders 30 days")]
+
+    style B fill:#6e56cf,color:#fff
+    style D fill:#0d9e6e,color:#fff
+```
+
+Everything runs on **your machine**: no relay servers, no accounts besides your
+own Figma PAT, no data leaves localhost except calls to `api.figma.com`.
 
 ## Why figmingo?
 
@@ -158,7 +179,7 @@ Everything brand-specific is parameterized via options:
 | Tool | What it does |
 |---|---|
 | `bridge_status` | Plugin connected? queue size, client info, supported commands. |
-| `execute_plugin_command` | Generic envelope: `create_frame`, `create_text`, `create_rectangle`, `set_fills`, `set_auto_layout`, `insert_image`, `move_node`, `resize_node`, `delete_node`, `get_selection`, `export_node` — plus `commands: [...]` batches (sequential, `$var` node-id refs). Queued (bounded) while disconnected; heartbeat-based timeouts (see below). `create_frame`/`create_rectangle` accept `rotation` (degrees); `export_node` accepts `params.outPath` to save bytes to disk. |
+| `execute_plugin_command` | Generic envelope: `create_frame`, `create_text`, `create_rectangle`, `set_fills`, `set_effects`, `set_auto_layout`, `insert_image`, `move_node`, `resize_node`, `delete_node`, `get_selection`, `get_file_info`, `get_page_children`, `export_node` — plus `commands: [...]` batches (sequential, `$var` node-id refs). Queued (bounded) while disconnected; heartbeat-based timeouts (see below). `create_frame`/`create_rectangle` accept `rotation` (degrees); `export_node` accepts `params.outPath` to save bytes to disk. |
 | `import_html_replica` | High-level: rebuild a replica spec as native Figma frames — main frame → section frames → nested containers / text / image nodes. Give it an HTML file (`htmlPath`) or URL (`htmlUrl`) and it extracts layout + computed styles with headless Chromium first (border-radius, borders, shadows, gradients, webfonts, real image bytes), or pass a ready-made spec (`spec`/`specPath`). `x`/`y` set the main frame landing spot; `dryRun` previews the command plan; degradations (missing fonts, SVG assets, failed images) come back in `warnings`. |
 
 The companion plugin (`plugin/`) connects to the MCP server at
@@ -198,9 +219,25 @@ Single (non-batch) commands use the same idle/total model.
 
 ## Replica Playbook
 
+The closed loop, end to end:
+
+```mermaid
+flowchart LR
+    F["Figma design<br/>(or any reference)"] -- "get_html_replica_spec" --> S["replica spec<br/>(absolute rects, computed<br/>typography, asset manifest)"]
+    S --> H["HTML / CSS"]
+    H -- "render_html_screenshot" --> R["Chromium render"]
+    R -- "verify_html_parity · compare_html_to_image" --> G{"three gates<br/>content · structural ±4px · visual ≤ 1%"}
+    G -- "per-band diff localization" --> H
+    G -- "passed" --> I["import_html_replica"]
+    I -- "plugin bridge · deterministic (MD5-verified)" --> C["native Figma frames"]
+
+    style G fill:#b7791f,color:#fff
+    style C fill:#0d9e6e,color:#fff
+```
+
 Doing an HTML replica of a Figma design (or any reference screenshot)? Read
 [docs/REPLICA-PLAYBOOK.md](docs/REPLICA-PLAYBOOK.md) first — the 6-step battle
-flow distilled from two scored replica rounds (measure-before-CSS, font lock-in,
+flow distilled from six scored replica rounds (measure-before-CSS, font lock-in,
 bandEdges-driven iteration, single-variable changes, convergence criteria), diff
 image reading, tool cheat sheet, and the copy-proofing checklist. It exists so
 your next replica converges in 3–4 rounds instead of 7.
@@ -216,10 +253,22 @@ your next replica converges in 3–4 rounds instead of 7.
 
 ## Acceptance (验收)
 
+Battle-tested on six scored replica challenges (independent judge agents,
+re-measured from scratch — no self-reported numbers):
+
+| Challenge | Score | Pixel diff | Notes |
+|---|---|---|---|
+| C1 Korean travel infographic | 91 | 2.46 % | PASS |
+| C2 Baidu homepage | 93 | 1.96 % | PASS |
+| C3 Kimi settings modal | 93 | 0.51 % | PASS |
+| C4 FAQ accordion (3 states) | 93 | 0.46–0.58 % | PASS |
+| C5 Music player (image → HTML → Figma) | 92 | 0.87 % | PASS, 30-node MD5-deterministic import |
+| C6 SaaS landing page (1440×4148, 7 sections) | 84 | 0.58 % | PASS, 279-node one-shot import, zero manual patches, MD5-verified reproducible |
+
 ```bash
 npm install
 npm run build
-npm test            # 90+ unit tests (vitest) with recorded fixtures
+npm test            # 176 unit tests (vitest) with recorded fixtures
 
 # live acceptance against the real API:
 FIGMA_API_KEY=<pat> TEST_FILE_KEY=<file-key> [TEST_NODE_ID=1:2] npm run accept
@@ -278,5 +327,5 @@ acceptance plan.
 5. **免费套餐**：全部读工具 + 写工具均可用；variables 接口是 Enterprise 限定，
    403 时自动降级为 styles + 推导 tokens（输出带 `source` 标记）。
 
-6. **验收**：`npm test`（90+ 单测全绿）；真实 API 验收：
+6. **验收**：`npm test`（176 单测全绿）；真实 API 验收：
    `FIGMA_API_KEY=xxx TEST_FILE_KEY=xxx npm run accept`，逐项打勾/打叉/跳过。
