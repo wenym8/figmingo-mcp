@@ -36,13 +36,13 @@ acceptance, and write-to-canvas through a companion plugin bridge.
 One command (macOS / Linux):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/figmingo-mcp/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.sh | bash
 ```
 
 Windows (PowerShell):
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/<owner>/figmingo-mcp/main/scripts/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.ps1 | iex
 ```
 
 The installer checks Node ≥ 18, installs the package, installs the Playwright
@@ -253,7 +253,7 @@ acceptance plan.
 1. **安装**（macOS / Linux）：
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/<owner>/figmingo-mcp/main/scripts/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.sh | bash
    ```
 
    Windows 用 `scripts/install.ps1`。安装器会检测 Node ≥ 18、全局安装包、写入

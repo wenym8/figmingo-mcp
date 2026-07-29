@@ -4,7 +4,7 @@
  *  - create_rectangle / create_frame `rotation` (degrees → radians)
  *  - batch per-command progress heartbeats + partial results on abort
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 
 interface PostedMessage {
   type: string;
@@ -49,6 +49,7 @@ function makeNode(type: string) {
 
 beforeAll(async () => {
   const failFonts = new Set<string>();
+  const hangFonts = new Set<string>();
   const findDeep = (nodes: any[], fn: (n: any) => boolean): any => {
     for (const n of nodes) {
       if (fn(n)) return n;
@@ -61,6 +62,7 @@ beforeAll(async () => {
     root: { name: 'UnitTestFile' },
     editorType: 'figma',
     __failFonts: failFonts,
+    __hangFonts: hangFonts,
     currentPage: {
       id: '0:1',
       name: 'Page 1',
@@ -90,7 +92,9 @@ beforeAll(async () => {
     base64Decode: (s: string) => Uint8Array.from(Buffer.from(s, 'base64')),
     base64Encode: (b: Uint8Array) => Buffer.from(b).toString('base64'),
     loadFontAsync: async (font: { family: string; style: string }) => {
-      if (failFonts.has(`${font.family} ${font.style}`)) throw new Error(`missing font ${font.family} ${font.style}`);
+      const key = `${font.family} ${font.style}`;
+      if (hangFonts.has(key)) return new Promise(() => {}); // never settles — the observed Figma hang
+      if (failFonts.has(key)) throw new Error(`missing font ${key}`);
     },
   };
   (globalThis as any).figma = figmaStub;
@@ -136,7 +140,9 @@ describe('plugin code.ts (sandbox half, stubbed figma)', () => {
         { command: 'create_frame', params: { width: 8, height: 8 } },
       ],
     });
-    const progress = msgs.filter((m) => m.type === 'command-progress');
+    // Filter out index-less liveness beats (command start / font retries);
+    // per-command heartbeats carry an index.
+    const progress = msgs.filter((m) => m.type === 'command-progress' && m.index !== undefined);
     expect(progress).toHaveLength(2);
     expect(progress.map((p) => p.index)).toEqual([0, 1]);
     expect(progress.every((p) => p.id === 'b1' && p.total === 2 && p.ok)).toBe(true);
@@ -164,7 +170,8 @@ describe('plugin code.ts (sandbox half, stubbed figma)', () => {
     expect(final?.result.results[0]).toMatchObject({ index: 0, ok: true });
     expect(final?.result.results[1]).toMatchObject({ index: 1, command: 'delete_node', ok: false });
     // The failed command also heartbeats, so the server knows how far it got.
-    const progress = msgs.filter((m) => m.type === 'command-progress');
+    // (Index-less liveness beats are filtered out.)
+    const progress = msgs.filter((m) => m.type === 'command-progress' && m.index !== undefined);
     expect(progress.map((p) => [p.index, p.ok])).toEqual([
       [0, true],
       [1, false],
@@ -344,5 +351,75 @@ describe('plugin code.ts — textAutoResize (P1)', () => {
     const text = figma.currentPage.children.at(-1);
     expect(text.textAutoResize).toBe('NONE');
     expect(text.width).toBe(120);
+  });
+});
+
+describe('plugin code.ts — loadFontAsync hang resilience', () => {
+  it('create_text times out a hanging loadFontAsync and falls back instead of freezing', async () => {
+    const figma = (globalThis as any).figma;
+    figma.__hangFonts.add('PingFang SC ExtraBold');
+    vi.useFakeTimers();
+    try {
+      posted.length = 0;
+      const p = onMessage!({
+        type: 'command',
+        id: 'hf1',
+        command: 'create_text',
+        params: {
+          characters: '标题',
+          fontName: { family: 'PingFang SC', style: 'ExtraBold' },
+          fallbackStyles: ['SemiBold', 'Medium'],
+        },
+      });
+      await vi.advanceTimersByTimeAsync(9000); // requested-font load times out at 8s
+      await p;
+      const result = posted.find((m) => m.type === 'command-result');
+      expect(result?.ok).toBe(true);
+      expect(result?.result.fontApplied).toEqual({ family: 'PingFang SC', style: 'SemiBold' });
+      expect(result?.result.fontFallback).toMatch(/PingFang SC ExtraBold unavailable/);
+    } finally {
+      vi.useRealTimers();
+      figma.__hangFonts.delete('PingFang SC ExtraBold');
+    }
+  });
+
+  it('batch emits start-of-command liveness beats and survives a hanging font mid-batch', async () => {
+    const figma = (globalThis as any).figma;
+    figma.__hangFonts.add('PingFang SC ExtraBold');
+    vi.useFakeTimers();
+    try {
+      posted.length = 0;
+      const p = onMessage!({
+        type: 'command',
+        id: 'hf2',
+        command: 'batch',
+        params: {
+          commands: [
+            { command: 'create_rectangle', params: { width: 4, height: 4 } },
+            { command: 'create_text', params: { characters: 'x', fontName: { family: 'PingFang SC', style: 'ExtraBold' } } },
+          ],
+        },
+      });
+      await vi.advanceTimersByTimeAsync(9000);
+      await p;
+      const final = posted.find((m) => m.type === 'command-result');
+      expect(final?.ok).toBe(true);
+      expect(final?.result.aborted).toBe(false);
+      expect(final?.result.results).toHaveLength(2);
+      // Fallback chain: family Regular succeeds → text still created.
+      expect(final?.result.results[1].result.fontApplied).toEqual({ family: 'PingFang SC', style: 'Regular' });
+      // Index-less beats: at least one per command start plus font attempts.
+      const beats = posted.filter((m) => m.type === 'command-progress' && m.index === undefined);
+      expect(beats.length).toBeGreaterThanOrEqual(2);
+      // Per-command heartbeats still fire after each command finishes.
+      const indexed = posted.filter((m) => m.type === 'command-progress' && m.index !== undefined);
+      expect(indexed.map((m) => [m.index, m.ok])).toEqual([
+        [0, true],
+        [1, true],
+      ]);
+    } finally {
+      vi.useRealTimers();
+      figma.__hangFonts.delete('PingFang SC ExtraBold');
+    }
   });
 });

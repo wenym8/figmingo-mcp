@@ -57,10 +57,27 @@ function substitute(value, vars) {
     }
     return value;
 }
-async function loadFont(fontName, fallbackStyles) {
+/**
+ * figma.loadFontAsync is only guaranteed to reject for missing fonts — in
+ * practice it can also HANG (never settle) for unavailable families such as
+ * PingFang SC ExtraBold, especially in long-lived degraded plugin sessions.
+ * A hang here used to freeze the whole batch: the awaited command never
+ * returned, no heartbeat was posted, and the server idle-timed-out. Race
+ * every attempt against a timeout so a hang degrades into the fallback
+ * chain instead of freezing the batch.
+ */
+const FONT_LOAD_TIMEOUT_MS = 8000;
+function tryLoadFont(font) {
+    return Promise.race([
+        figma.loadFontAsync(font),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`loadFontAsync timed out after ${FONT_LOAD_TIMEOUT_MS}ms`)), FONT_LOAD_TIMEOUT_MS)),
+    ]);
+}
+async function loadFont(fontName, fallbackStyles, beat) {
     const font = fontName ?? { family: 'Inter', style: 'Regular' };
     try {
-        await figma.loadFontAsync(font);
+        beat?.();
+        await tryLoadFont(font);
         return { font, fallback: undefined };
     }
     catch {
@@ -77,7 +94,8 @@ async function loadFont(fontName, fallbackStyles) {
                 continue;
             seen.add(key);
             try {
-                await figma.loadFontAsync(f);
+                beat?.();
+                await tryLoadFont(f);
                 return { font: f, fallback: `requested ${font.family} ${font.style} unavailable` };
             }
             catch {
@@ -146,9 +164,9 @@ const handlers = {
             await handlers.set_auto_layout({ nodeId: frame.id, ...params.autoLayout }, vars);
         return { nodeId: frame.id };
     },
-    async create_text(params, vars) {
+    async create_text(params, vars, ctx) {
         const parent = parentOf(params, vars);
-        const { font, fallback } = await loadFont(params.fontName, params.fallbackStyles);
+        const { font, fallback } = await loadFont(params.fontName, params.fallbackStyles, ctx?.beat);
         const text = figma.createText();
         parent.appendChild(text);
         text.fontName = font;
@@ -403,6 +421,10 @@ const handlers = {
         let abortError;
         for (let i = 0; i < commands.length; i++) {
             const cmd = commands[i];
+            // Liveness heartbeat at command start: heartbeats otherwise only fire
+            // after a command finishes, so a slow command would trip the server
+            // idle timer even while perfectly healthy.
+            ctx?.beat?.();
             const handler = cmd.command === 'batch' ? undefined : handlers[cmd.command];
             if (!handler) {
                 const error = cmd.command === 'batch' ? 'nested batch is not supported' : `unknown command ${cmd.command}`;
@@ -479,6 +501,10 @@ figma.ui.onmessage = async (msg) => {
         try {
             const ctx = {
                 reportProgress: (info) => figma.ui.postMessage({ type: 'command-progress', id: msg.id, ...info }),
+                // Index-less progress message: the server treats any progress as a
+                // liveness heartbeat and resets its idle timer without recording a
+                // completed command index.
+                beat: () => figma.ui.postMessage({ type: 'command-progress', id: msg.id }),
             };
             const result = await dispatch(msg.command, msg.params ?? {}, ctx);
             figma.ui.postMessage({ type: 'command-result', id: msg.id, ok: true, result: result ?? null });

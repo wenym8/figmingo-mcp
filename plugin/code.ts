@@ -61,10 +61,31 @@ function substitute(value: any, vars: Map<string, string>): any {
   return value;
 }
 
-async function loadFont(fontName?: { family: string; style: string }, fallbackStyles?: string[]) {
+/**
+ * figma.loadFontAsync is only guaranteed to reject for missing fonts — in
+ * practice it can also HANG (never settle) for unavailable families such as
+ * PingFang SC ExtraBold, especially in long-lived degraded plugin sessions.
+ * A hang here used to freeze the whole batch: the awaited command never
+ * returned, no heartbeat was posted, and the server idle-timed-out. Race
+ * every attempt against a timeout so a hang degrades into the fallback
+ * chain instead of freezing the batch.
+ */
+const FONT_LOAD_TIMEOUT_MS = 8000;
+
+function tryLoadFont(font: { family: string; style: string }): Promise<void> {
+  return Promise.race([
+    figma.loadFontAsync(font),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`loadFontAsync timed out after ${FONT_LOAD_TIMEOUT_MS}ms`)), FONT_LOAD_TIMEOUT_MS),
+    ),
+  ]);
+}
+
+async function loadFont(fontName?: { family: string; style: string }, fallbackStyles?: string[], beat?: () => void) {
   const font = fontName ?? { family: 'Inter', style: 'Regular' };
   try {
-    await figma.loadFontAsync(font);
+    beat?.();
+    await tryLoadFont(font);
     return { font, fallback: undefined as string | undefined };
   } catch {
     const attempts: Array<{ family: string; style: string }> = [];
@@ -78,7 +99,8 @@ async function loadFont(fontName?: { family: string; style: string }, fallbackSt
       if (seen.has(key)) continue;
       seen.add(key);
       try {
-        await figma.loadFontAsync(f);
+        beat?.();
+        await tryLoadFont(f);
         return { font: f, fallback: `requested ${font.family} ${font.style} unavailable` };
       } catch {
         /* try next */
@@ -122,6 +144,13 @@ function applyRotation(node: LayoutMixin, degrees: unknown) {
 interface RunCtx {
   /** Report that one batch command finished (heartbeat for the server). */
   reportProgress?: (info: { index: number; total: number; command: string; ok: boolean }) => void;
+  /**
+   * Liveness-only heartbeat (no command/index semantics): resets the server
+   * idle timer while a long command is still running (e.g. between font-load
+   * retries). Heartbeats otherwise only fire AFTER a command finishes, so a
+   * single slow command could otherwise trip the idle timeout while healthy.
+   */
+  beat?: () => void;
 }
 
 // ---- command handlers ----
@@ -146,9 +175,9 @@ const handlers: Record<string, (params: any, vars: Map<string, string>, ctx?: Ru
     return { nodeId: frame.id };
   },
 
-  async create_text(params, vars) {
+  async create_text(params, vars, ctx) {
     const parent = parentOf(params, vars);
-    const { font, fallback } = await loadFont(params.fontName, params.fallbackStyles);
+    const { font, fallback } = await loadFont(params.fontName, params.fallbackStyles, ctx?.beat);
     const text = figma.createText();
     parent.appendChild(text);
     text.fontName = font;
@@ -378,6 +407,10 @@ const handlers: Record<string, (params: any, vars: Map<string, string>, ctx?: Ru
     let abortError: string | undefined;
     for (let i = 0; i < commands.length; i++) {
       const cmd = commands[i];
+      // Liveness heartbeat at command start: heartbeats otherwise only fire
+      // after a command finishes, so a slow command would trip the server
+      // idle timer even while perfectly healthy.
+      ctx?.beat?.();
       const handler = cmd.command === 'batch' ? undefined : handlers[cmd.command];
       if (!handler) {
         const error = cmd.command === 'batch' ? 'nested batch is not supported' : `unknown command ${cmd.command}`;
@@ -455,6 +488,10 @@ figma.ui.onmessage = async (msg: any) => {
     try {
       const ctx: RunCtx = {
         reportProgress: (info) => figma.ui.postMessage({ type: 'command-progress', id: msg.id, ...info }),
+        // Index-less progress message: the server treats any progress as a
+        // liveness heartbeat and resets its idle timer without recording a
+        // completed command index.
+        beat: () => figma.ui.postMessage({ type: 'command-progress', id: msg.id }),
       };
       const result = await dispatch(msg.command, msg.params ?? {}, ctx);
       figma.ui.postMessage({ type: 'command-result', id: msg.id, ok: true, result: result ?? null });

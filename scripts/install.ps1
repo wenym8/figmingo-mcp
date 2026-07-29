@@ -1,5 +1,5 @@
 # figmingo-mcp one-command installer (Windows).
-#   iwr -useb https://raw.githubusercontent.com/<owner>/figmingo-mcp/main/scripts/install.ps1 | iex
+#   iwr -useb https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.ps1 | iex
 # or locally:
 #   powershell -ExecutionPolicy Bypass -File scripts/install.ps1 [-Yes] [-Clients cursor,claude-code,kimi,codex] [-Token <FIGMA_PAT>] [-NoInstall]
 param(
@@ -144,10 +144,33 @@ $candidates = @(
 )
 $src = $candidates | Where-Object { $_ -and (Test-Path (Join-Path $_ "manifest.json")) } | Select-Object -First 1
 if ($src) {
-  Copy-Item (Join-Path $src "manifest.json"), (Join-Path $src "code.js"), (Join-Path $src "README.md") $pluginDir -ErrorAction SilentlyContinue
+  Copy-Item (Join-Path $src "manifest.json"), (Join-Path $src "code.js"), (Join-Path $src "ui.html"), (Join-Path $src "README.md") $pluginDir -ErrorAction SilentlyContinue
   Info "companion plugin copied to $pluginDir"
 } else {
   Warn "could not locate bundled plugin; copy plugin\ from the npm package manually"
+}
+
+# --- 5b. Playwright Chromium (HTML render/extract/compare) -------------------
+# `npm install -g` fetches the playwright package but NOT its ~170MB browser.
+# Locate the playwright CLI inside the installed package (global first, then
+# the repo checkout for -NoInstall runs) and install chromium. Idempotent:
+# playwright skips the download when the browser is already present.
+$pwCandidates = @(
+  (Join-Path $npmRoot "$Pkg\node_modules\.bin\playwright.cmd"),
+  (Join-Path $PSScriptRoot "..\node_modules\.bin\playwright.cmd")
+)
+$pwCli = $pwCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+if ($pwCli) {
+  Info "ensuring Playwright Chromium (one-time ~170MB download)"
+  & $pwCli install chromium
+  if ($LASTEXITCODE -eq 0) {
+    Info "Playwright Chromium ready"
+  } else {
+    Warn "Chromium download FAILED - HTML render/extract/compare tools will not work."
+    Warn "Fix manually: npx playwright install chromium   (then: $Cmd doctor)"
+  }
+} else {
+  Warn "playwright CLI not found - run: npx playwright install chromium (then: $Cmd doctor)"
 }
 
 # --- 6. Next steps ------------------------------------------------------------
@@ -164,5 +187,6 @@ Next steps:
        Plugins -> Development -> Import plugin from manifest...
        -> select $pluginDir\manifest.json
        -> run "figmingo" from Plugins -> Development while using write tools.
-  4. Verify: ask your AI client to call the "whoami" tool.
+  4. Verify the environment:  $Cmd doctor
+  5. Verify end-to-end: ask your AI client to call the "whoami" tool.
 "@

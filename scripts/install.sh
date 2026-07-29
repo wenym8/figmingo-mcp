@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # figmingo-mcp one-command installer (macOS / Linux).
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/figmingo-mcp/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.sh | bash
 # or locally:
 #   bash scripts/install.sh [--yes] [--clients cursor,claude-code,claude-desktop,vscode,kimi,codex] [--token <FIGMA_PAT>] [--no-install]
 set -euo pipefail
@@ -270,5 +270,5 @@ Next steps:
   4. Verify the environment:  $CMD doctor
   5. Verify end-to-end: ask your AI client to call the "whoami" tool.
 
-Docs: https://github.com/<owner>/figmingo-mcp#readme
+Docs: https://github.com/wenym8/figmingo-mcp#readme
 EOF
