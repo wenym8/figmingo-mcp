@@ -118,8 +118,9 @@ export async function launchBrowser() {
       return await chromium.launch({ headless: true, channel: 'chrome' });
     } catch {
       throw new Error(
-        'Playwright chromium is not available. Run `npx playwright install chromium` ' +
-          `(or install Google Chrome). Original error: ${(err as Error).message}`,
+        'Chromium 未安装：HTML 渲染/提取功能需要浏览器。请运行: npx playwright install chromium' +
+          '（或重跑 scripts/install.sh；如已装 Google Chrome 也会自动回退）。' +
+          ` Original error: ${(err as Error).message}`,
       );
     }
   }

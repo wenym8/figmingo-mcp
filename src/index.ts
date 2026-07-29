@@ -9,6 +9,7 @@ Local-first Figma MCP server (read parity + HTML 1:1 replica + plugin-bridge wri
 Usage:
   figmingo-mcp [options]            Start the MCP server (stdio by default)
   figmingo-mcp --http --port 3845   Start Streamable HTTP transport on 127.0.0.1
+  figmingo-mcp doctor               Diagnose the local install (node, token, chromium, plugin, client configs)
   figmingo-mcp cache-clear          Remove the disk cache (~/.figmingo/cache)
 
 Options:
@@ -36,6 +37,12 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig(process.argv.slice(2));
+
+  if (args[0] === 'doctor') {
+    const { runDoctor } = await import('./doctor');
+    process.exitCode = await runDoctor();
+    return;
+  }
 
   if (args[0] === 'cache-clear') {
     const client = new FigmaRestClient({

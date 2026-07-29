@@ -54,11 +54,44 @@ CMD="$(command -v figmingo-mcp || echo "npx figmingo-mcp")"
 
 # --- 3. Figma token ----------------------------------------------------------
 if [ -z "$TOKEN" ] && [ -n "${FIGMA_API_KEY:-}" ]; then TOKEN="$FIGMA_API_KEY"; fi
-# Read from /dev/tty so interactive prompts also work in `curl | bash` installs
-# (where stdin is the script itself, not the keyboard).
-if [ -z "$TOKEN" ] && [ "$YES" -eq 0 ] && [ -r /dev/tty ]; then
-  printf 'Figma Personal Access Token (leave empty to configure later): ' > /dev/tty
-  read -r TOKEN < /dev/tty || true
+# Reuse a token already written by a previous install (re-runs must not wipe it).
+if [ -z "$TOKEN" ]; then
+  for cfg in \
+    "$HOME/.cursor/mcp.json" \
+    "$HOME/.claude.json" \
+    "$HOME/Library/Application Support/Claude/claude_desktop_config.json" \
+    "$HOME/.config/Claude/claude_desktop_config.json" \
+    "$HOME/Library/Application Support/Code/User/mcp.json" \
+    "$HOME/.config/Code/User/mcp.json" \
+    "$HOME/.kimi/mcp.json"; do
+    [ -f "$cfg" ] || continue
+    TOKEN="$(node -e 'try{const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(c?.mcpServers?.figmingo?.env?.FIGMA_API_KEY??"")}catch{}' "$cfg" 2>/dev/null || true)"
+    if [ -n "$TOKEN" ]; then info "reused Figma token from $cfg"; break; fi
+  done
+fi
+# read_answer <default>: prompts on stderr (never captured by $(...)), then
+# reads the answer from the safest source available:
+#   1. stdin is a keyboard (tty)          → read stdin
+#   2. script runs from a file with piped → consume the pipe (e.g. echo "" | bash install.sh)
+#      stdin (NOT curl|bash, where stdin
+#      is the script itself)
+#   3. curl|bash with a real /dev/tty     → read the keyboard via /dev/tty
+#   4. nothing readable                   → the default, no blocking
+read_answer() {
+  local default="$1" ans=""
+  if [ -t 0 ]; then
+    read -r ans || ans=""
+  elif [ -f "$0" ] && [ ! -t 0 ]; then
+    read -r ans || ans=""
+  elif [ -r /dev/tty ]; then
+    read -r ans < /dev/tty || ans=""
+  fi
+  printf '%s' "${ans:-$default}"
+}
+
+if [ -z "$TOKEN" ] && [ "$YES" -eq 0 ]; then
+  printf 'Figma Personal Access Token (leave empty to configure later): ' >&2
+  TOKEN="$(read_answer "")"
 fi
 
 token_json() {
@@ -83,7 +116,12 @@ write_config() {
     const [p, entryRaw] = [process.argv[1], process.env.ENTRY];
     const cfg = JSON.parse(fs.readFileSync(p, "utf8") || "{}");
     cfg.mcpServers = cfg.mcpServers || {};
-    cfg.mcpServers["figmingo"] = JSON.parse(entryRaw);
+    const next = JSON.parse(entryRaw);
+    // Non-destructive re-runs: keep a previously written env (token) when this
+    // run has none to write.
+    const prev = cfg.mcpServers["figmingo"];
+    if (!next.env && prev && prev.env) next.env = prev.env;
+    cfg.mcpServers["figmingo"] = next;
     fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + "\n");
   ' "$tmp"
   mv "$tmp" "$path"
@@ -100,6 +138,12 @@ write_codex_config() {
   if [ -f "$path" ] && [ ! -f "$path.figmingo-bak" ]; then
     cp "$path" "$path.figmingo-bak"
     info "backed up existing config → $path.figmingo-bak"
+  fi
+  # Non-destructive re-runs: inherit a previously written token.
+  if [ -z "$TOKEN" ] && [ -f "$path" ]; then
+    local existing
+    existing="$(sed -n 's/^FIGMA_API_KEY = "\(.*\)"[[:space:]]*$/\1/p' "$path" | head -1)"
+    if [ -n "$existing" ]; then TOKEN="$existing"; fi
   fi
   local cmd args_toml=""
   if [ "$CMD" = "npx figmingo-mcp" ]; then
@@ -141,12 +185,11 @@ write_codex_config() {
 
 pick_clients() {
   if [ -n "$CLIENTS" ]; then echo "$CLIENTS"; return; fi
-  # Prompt via /dev/tty so `curl | bash` installs stay interactive; only the
-  # answer goes to stdout (the caller captures this function's stdout).
-  if [ "$YES" -eq 1 ] || [ ! -r /dev/tty ]; then echo "cursor,claude-code,claude-desktop,vscode,kimi,codex"; return; fi
-  printf 'Configure which clients? [cursor,claude-code,claude-desktop,vscode,kimi,codex] (comma list, empty = all): ' > /dev/tty
-  local ans; read -r ans < /dev/tty || true
-  echo "${ans:-cursor,claude-code,claude-desktop,vscode,kimi,codex}"
+  # Prompt on stderr so $(...) only ever captures the answer itself.
+  local default="cursor,claude-code,claude-desktop,vscode,kimi,codex"
+  if [ "$YES" -eq 1 ]; then echo "$default"; return; fi
+  printf 'Configure which clients? [cursor,claude-code,claude-desktop,vscode,kimi,codex] (comma list, empty = all): ' >&2
+  read_answer "$default"; echo
 }
 
 IFS=',' read -ra WANT <<< "$(pick_clients)"
@@ -180,10 +223,33 @@ for cand in \
   if [ -n "$cand" ] && [ -f "$cand/manifest.json" ]; then SRC="$cand"; break; fi
 done
 if [ -n "$SRC" ]; then
-  cp "$SRC/manifest.json" "$SRC/code.js" "$SRC/README.md" "$PLUGIN_DIR/" 2>/dev/null || true
+  cp "$SRC/manifest.json" "$SRC/code.js" "$SRC/ui.html" "$SRC/README.md" "$PLUGIN_DIR/" 2>/dev/null || true
   info "companion plugin copied to $PLUGIN_DIR"
 else
   warn "could not locate bundled plugin; copy plugin/ from the npm package manually"
+fi
+
+# --- 5b. Playwright Chromium (HTML render/extract/compare) -------------------
+# `npm install -g` fetches the playwright package but NOT its ~170MB browser.
+# Locate the playwright CLI inside the installed package (global first, then
+# the repo checkout for --no-install runs) and install chromium. Idempotent:
+# playwright skips the download when the browser is already present.
+PW_CLI=""
+for cand in \
+  "$(npm root -g 2>/dev/null)/$PKG/node_modules/.bin/playwright" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/node_modules/.bin/playwright"; do
+  if [ -n "$cand" ] && [ -x "$cand" ]; then PW_CLI="$cand"; break; fi
+done
+if [ -n "$PW_CLI" ]; then
+  info "ensuring Playwright Chromium (one-time ~170MB download)"
+  if "$PW_CLI" install chromium; then
+    info "Playwright Chromium ready"
+  else
+    warn "Chromium download FAILED — HTML render/extract/compare tools will not work."
+    warn "Fix manually: npx playwright install chromium   (then: $CMD doctor)"
+  fi
+else
+  warn "playwright CLI not found — run: npx playwright install chromium (then: $CMD doctor)"
 fi
 
 # --- 6. Next steps ------------------------------------------------------------
@@ -201,7 +267,8 @@ Next steps:
        Plugins → Development → Import plugin from manifest…
        → select $PLUGIN_DIR/manifest.json
        → run "figmingo" from Plugins → Development while using write tools.
-  4. Verify: ask your AI client to call the "whoami" tool.
+  4. Verify the environment:  $CMD doctor
+  5. Verify end-to-end: ask your AI client to call the "whoami" tool.
 
 Docs: https://github.com/<owner>/figmingo-mcp#readme
 EOF

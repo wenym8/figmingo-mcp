@@ -45,13 +45,21 @@ Windows (PowerShell):
 iwr -useb https://raw.githubusercontent.com/<owner>/figmingo-mcp/main/scripts/install.ps1 | iex
 ```
 
-The installer checks Node ≥ 18, installs the package, writes MCP config into
+The installer checks Node ≥ 18, installs the package, installs the Playwright
+Chromium browser (~170MB, one-time — required by the HTML render/extract/compare
+tools), writes MCP config into
 **Cursor** (`~/.cursor/mcp.json`), **Claude Code** (`~/.claude.json`),
 **Claude Desktop**, **VS Code**, **Kimi CLI** (`~/.kimi/mcp.json`), and
 **Codex CLI** (`~/.codex/config.toml`, TOML — only the
 `[mcp_servers.figmingo]` section is touched; the original is backed up to
-`config.toml.figmingo-bak`), copies the companion plugin to
-`~/.figmingo/plugin`, and prints next steps.
+`config.toml.figmingo-bak`), copies the companion plugin (manifest + code.js +
+ui.html) to `~/.figmingo/plugin`, and prints next steps. Re-running is
+idempotent and never wipes a previously configured Figma token.
+
+After installing, run `figmingo-mcp doctor` to verify the whole environment
+(Node, Figma token validity, Chromium, plugin files + version drift, client
+config entries, bridge port) — every check prints a ✓/✗ with a fix hint, and
+the exit code is 0 only when all checks pass.
 
 Manual setup (any client):
 
