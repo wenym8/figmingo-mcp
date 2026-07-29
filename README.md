@@ -1,0 +1,1 @@
+# figmingo-mcp
