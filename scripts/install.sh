@@ -69,6 +69,36 @@ case "$CMD" in
     ;;
 esac
 
+# GUI clients (Finder-launched macOS apps) get a bare PATH
+# (/usr/bin:/bin:/usr/sbin:/sbin) — the npm shim's `#!/usr/bin/env node`
+# shebang then can't find node installed via fnm/nvm/volta/Homebrew, and the
+# client silently fails to spawn the server (plugin stuck on "connecting…").
+# When node lives outside /usr/bin|/bin, write configs as
+# { command: <node abs path>, args: [<resolved script>] } — PATH-immune.
+ENTRY_ARGS_JSON='[]'
+ENTRY_ARGS_TOML=''
+if [ "$CMD" != "npx figmingo-mcp" ]; then
+  NODE_BIN="$(command -v node || true)"
+  case "$NODE_BIN" in
+    *fnm_multishells*)
+      NB_STABLE="$HOME/.local/share/fnm/node-versions/$(node -p 'process.version' 2>/dev/null || true)/installation/bin/node"
+      [ -x "$NB_STABLE" ] && NODE_BIN="$NB_STABLE"
+      ;;
+  esac
+  case "$NODE_BIN" in
+    /usr/bin/node|/bin/node|'') : ;;  # system-wide node: the shim works everywhere
+    *)
+      SCRIPT_PATH="$(node -e 'process.stdout.write(require("fs").realpathSync(process.argv[1]))' "$CMD" 2>/dev/null || true)"
+      if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
+        CMD="$NODE_BIN"
+        ENTRY_ARGS_JSON="$(node -e 'process.stdout.write(JSON.stringify([process.argv[1]]))' "$SCRIPT_PATH")"
+        ENTRY_ARGS_TOML="\"$SCRIPT_PATH\""
+        info "user-local node detected; clients will spawn: $NODE_BIN $SCRIPT_PATH"
+      fi
+      ;;
+  esac
+fi
+
 # --- 3. Figma token ----------------------------------------------------------
 if [ -z "$TOKEN" ] && [ -n "${FIGMA_API_KEY:-}" ]; then TOKEN="$FIGMA_API_KEY"; fi
 # Reuse a token already written by a previous install (re-runs must not wipe it).
@@ -123,7 +153,7 @@ write_config() {
   if [ "$CMD" = "npx figmingo-mcp" ]; then
     entry=$(printf '{ "command": "npx", "args": ["-y", "figmingo-mcp"]%s }' "$(token_json)")
   else
-    entry=$(printf '{ "command": "%s"%s }' "$CMD" "$(token_json)")
+    entry=$(printf '{ "command": "%s", "args": %s%s }' "$CMD" "$ENTRY_ARGS_JSON" "$(token_json)")
   fi
   local tmp
   tmp="$(mktemp)"
@@ -162,7 +192,7 @@ write_codex_config() {
     existing="$(sed -n 's/^FIGMA_API_KEY = "\(.*\)"[[:space:]]*$/\1/p' "$path" | head -1)"
     if [ -n "$existing" ]; then TOKEN="$existing"; fi
   fi
-  local cmd args_toml=""
+  local cmd args_toml="$ENTRY_ARGS_TOML"
   if [ "$CMD" = "npx figmingo-mcp" ]; then
     cmd="npx"; args_toml='"-y", "figmingo-mcp"'
   else

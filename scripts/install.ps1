@@ -69,6 +69,27 @@ if ($Cmd -match 'fnm_multishells') {
 # Set-Content -Encoding UTF8 writes a BOM that strict JSON parsers reject).
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
+# GUI clients get a stripped-down PATH — the npm shim (.cmd) relies on `node`
+# being resolvable, which fails for fnm/nvm/volta installs. When node lives in
+# a version manager, write configs as node.exe + resolved script (PATH-immune).
+$EntryArgs = @()
+if ($Cmd -ne "npx figmingo-mcp" -and ($Cmd -match 'fnm|nvm|volta')) {
+  $nodeBin = (Get-Command node -ErrorAction SilentlyContinue).Source
+  if ($nodeBin -match 'fnm_multishells') {
+    $nbStable = Join-Path (Split-Path (Split-Path $nodeBin -Parent) -Parent) "node.exe"
+    if (Test-Path $nbStable) { $nodeBin = $nbStable }
+  }
+  # npm .cmd shim sits at <prefix>\figmingo-mcp.cmd; the real script is
+  # <prefix>\node_modules\figmingo-mcp\dist\index.js
+  $prefix = Split-Path $Cmd -Parent
+  $scriptPath = Join-Path $prefix "node_modules\figmingo-mcp\dist\index.js"
+  if ($nodeBin -and (Test-Path $nodeBin) -and (Test-Path $scriptPath)) {
+    $Cmd = $nodeBin
+    $EntryArgs = @($scriptPath)
+    Info "version-manager node detected; clients will spawn: $nodeBin $scriptPath"
+  }
+}
+
 # --- 3. Figma token ----------------------------------------------------------
 if (-not $Token -and $env:FIGMA_API_KEY) { $Token = $env:FIGMA_API_KEY }
 # Reuse a token already written by a previous install (re-runs must not wipe it).
@@ -101,7 +122,7 @@ function Write-Config($name, $path) {
   if ($Cmd -eq "npx figmingo-mcp") {
     $entry = @{ command = "npx"; args = @("-y", "figmingo-mcp") }
   } else {
-    $entry = @{ command = $Cmd }
+    $entry = @{ command = $Cmd; args = $EntryArgs }
   }
   if ($Token) { $entry.env = @{ FIGMA_API_KEY = $Token } }
   $raw = ""
@@ -135,7 +156,7 @@ function Write-CodexConfig($path) {
     if ($m) { $script:Token = $m.Matches[0].Groups[1].Value }
   }
   $tomlCmd = $Cmd -replace '\\', '/'   # backslashes are escape chars in TOML basic strings
-  $tomlArgs = @()
+  $tomlArgs = @($EntryArgs | ForEach-Object { $_ -replace '\\', '/' })
   if ($Cmd -eq "npx figmingo-mcp") { $tomlCmd = "npx"; $tomlArgs = @("-y", "figmingo-mcp") }
   $lines = @()
   if (Test-Path $path) {
