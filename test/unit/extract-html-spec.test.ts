@@ -234,6 +234,56 @@ describe('rawDomToReplicaSpec (pure mapping)', () => {
     expect(btn.children![0].style.fontWeight).toBe(700);
   });
 
+  it('synthetic labels use the measured text span (textRect) over the container rect', () => {
+    const spec = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({
+              tag: 'button',
+              text: 'Add',
+              rect: { x: 244, y: 846, width: 86, height: 40 },
+              // The browser-measured glyph span (icon shares the button, so the
+              // text is right-of-center and much shorter than the button).
+              textRect: { x: 287, y: 857, width: 26, height: 16 },
+              style: { backgroundColor: 'rgb(255,255,255)', borderWidth: ['1px', '1px', '1px', '1px'], borderColor: ['rgb(0,0,0)', 'rgb(0,0,0)', 'rgb(0,0,0)', 'rgb(0,0,0)'], borderStyle: ['solid', 'solid', 'solid', 'solid'], fontSize: '14px', lineHeight: '15px', textAlign: 'center' },
+              children: [
+                node({ tag: 'svg', rect: { x: 259, y: 854, width: 24, height: 24 }, style: {}, svg: '<svg/>' }),
+              ],
+            }),
+          ],
+        }),
+      ]),
+    );
+    const btn = spec.sections[0].elements[0].children![0];
+    const label = btn.children!.find((c) => c.type === 'text')!;
+    // Measured span, not the full 86×40 button rect…
+    expect(label.rect).toEqual({ x: 287, y: 857, width: 26, height: 16 });
+    // …which also fixes the line-count heuristic: 16/15 = 1.07 → single-line.
+    expect(label.textAutoResize).toBe('WIDTH_AND_HEIGHT');
+    // Fallback: without textRect the label spans the container (legacy shape).
+    const spec2 = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({
+              tag: 'button',
+              text: 'Add',
+              rect: { x: 244, y: 846, width: 86, height: 40 },
+              style: { backgroundColor: 'rgb(255,255,255)', fontSize: '14px', lineHeight: '15px', textAlign: 'center' },
+            }),
+          ],
+        }),
+      ]),
+    );
+    const label2 = spec2.sections[0].elements[0].children![0].children![0];
+    expect(label2.rect).toEqual({ x: 244, y: 846, width: 86, height: 40 });
+  });
+
   it('leaf with background-image url() becomes an image element; gradients stay fills', () => {
     const spec = rawDomToReplicaSpec(
       raw([
@@ -396,6 +446,47 @@ describe('P0/P1/P2 fixes (pure mapping)', () => {
     expect(single.textAutoResize).toBe('WIDTH_AND_HEIGHT');
     expect(multi.textAutoResize).toBe('HEIGHT'); // 120/28 ≈ 4.3 lines
     expect(nowrap.textAutoResize).toBe('WIDTH_AND_HEIGHT');
+  });
+
+  it('right-flush single-line text is flagged anchorRight; centered/full-width/non-flush/multi-line are not', () => {
+    const spec = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({
+              tag: 'div',
+              id: 'card',
+              rect: { x: 987, y: 0, width: 373, height: 200 },
+              style: { backgroundColor: 'rgb(255, 255, 255)' },
+              children: [
+                // Right edge flush with the card (987+373 = 1360) → anchorRight.
+                node({ tag: 'p', id: 'price', text: '$1,615', rect: { x: 1316, y: 10, width: 44, height: 22 }, style: { fontSize: '16px', lineHeight: '22px', textAlign: 'start' } }),
+                // 3px gap is within tolerance → anchorRight.
+                node({ tag: 'p', id: 'ship', text: 'FREE', rect: { x: 1320, y: 40, width: 37, height: 22 }, style: { fontSize: '16px', lineHeight: '22px', textAlign: 'start' } }),
+                // Center-aligned flush text: the anchor is the center, not the right edge.
+                node({ tag: 'p', id: 'centered', text: 'mid', rect: { x: 1290, y: 70, width: 70, height: 22 }, style: { fontSize: '16px', lineHeight: '22px', textAlign: 'center' } }),
+                // Near-full-width flush text (≥90% of parent) — synthetic-label shape, excluded.
+                node({ tag: 'p', id: 'wide', text: 'wide label', rect: { x: 997, y: 100, width: 360, height: 22 }, style: { fontSize: '16px', lineHeight: '22px', textAlign: 'start' } }),
+                // Not flush (20px gap).
+                node({ tag: 'p', id: 'loose', text: 'loose', rect: { x: 1250, y: 130, width: 90, height: 22 }, style: { fontSize: '16px', lineHeight: '22px', textAlign: 'start' } }),
+                // Multi-line flush text: fixed width, no rightward growth → no anchor needed.
+                node({ tag: 'p', id: 'para', text: 'wrapped', rect: { x: 1193, y: 150, width: 167, height: 60 }, style: { fontSize: '16px', lineHeight: '22px', textAlign: 'start' } }),
+              ],
+            }),
+          ],
+        }),
+      ]),
+    );
+    const card = spec.sections[0].elements[0].children![0];
+    const byId = (id: string) => card.children!.find((c) => c.key.includes(id) || c.name === id)!;
+    expect(byId('price').anchorRight).toBe(true);
+    expect(byId('ship').anchorRight).toBe(true);
+    expect(byId('centered').anchorRight).toBeUndefined();
+    expect(byId('wide').anchorRight).toBeUndefined();
+    expect(byId('loose').anchorRight).toBeUndefined();
+    expect(byId('para').anchorRight).toBeUndefined();
   });
 
   it('P2: html background paints the canvas when body is transparent', () => {

@@ -76,6 +76,14 @@ export interface ReplicaElement {
    */
   textAutoResize?: 'WIDTH_AND_HEIGHT' | 'HEIGHT' | 'NONE';
   /**
+   * Right-edge anchor hint (produced by the HTML extractor): the text's right
+   * edge was flush with its parent's content right edge (≤4px gap) in the
+   * browser. With WIDTH_AND_HEIGHT the Figma box grows/shrinks from the left,
+   * so the plugin re-anchors x after creation to keep the right edge fixed
+   * (right-aligned prices/labels otherwise overflow and get clipped).
+   */
+  anchorRight?: boolean;
+  /**
    * Nested children for container elements (produced by the HTML extractor).
    * When present on the section root element the importer recurses with
    * parent-relative coordinate conversion; flat specs (no children anywhere)

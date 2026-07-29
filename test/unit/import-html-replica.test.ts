@@ -288,6 +288,79 @@ describe('P1/P2 importer support', () => {
     expect(byName('multi').params?.textAutoResize).toBe('HEIGHT'); // 200/24 ≈ 8.3 lines
   });
 
+  it('right-anchored single-line text carries anchorRight to the plugin; others do not', async () => {
+    const root = el({
+      type: 'frame',
+      name: 'body',
+      rect: { x: 0, y: 0, width: 400, height: 300 },
+      children: [
+        el({
+          type: 'text',
+          name: 'price',
+          text: '$1,615',
+          rect: { x: 316, y: 10, width: 44, height: 22 },
+          style: { fontSize: 16, lineHeight: 22 },
+          textAutoResize: 'WIDTH_AND_HEIGHT',
+          anchorRight: true,
+        }),
+        el({
+          type: 'text',
+          name: 'plain',
+          text: 'abc',
+          rect: { x: 0, y: 40, width: 40, height: 22 },
+          style: { fontSize: 16, lineHeight: 22 },
+          textAutoResize: 'WIDTH_AND_HEIGHT',
+        }),
+        el({
+          type: 'text',
+          name: 'paragraph',
+          text: 'def',
+          rect: { x: 316, y: 70, width: 44, height: 60 },
+          style: { fontSize: 16, lineHeight: 22 },
+          textAutoResize: 'HEIGHT',
+          anchorRight: true, // anchorRight is only meaningful for WIDTH_AND_HEIGHT
+        }),
+      ],
+    });
+    const ctx = makeCtx();
+    const plan = await buildImportCommands(ctx, specOf(root));
+    const byName = (n: string) => plan.commands.find((c) => c.params?.name === n)!;
+    expect(byName('price').params?.anchorRight).toBe(true);
+    expect(byName('plain').params?.anchorRight).toBeUndefined();
+    expect(byName('paragraph').params?.anchorRight).toBeUndefined();
+  });
+
+  it('single-line text drops PIXELS lineHeight (AUTO + plugin recenter); multi-line keeps it', async () => {
+    const root = el({
+      type: 'frame',
+      name: 'body',
+      rect: { x: 0, y: 0, width: 400, height: 300 },
+      children: [
+        el({
+          type: 'text',
+          name: 'single',
+          text: 'Add',
+          rect: { x: 24, y: 2, width: 26, height: 20 },
+          style: { fontSize: 14, lineHeight: 20 },
+          textAutoResize: 'WIDTH_AND_HEIGHT',
+        }),
+        el({
+          type: 'text',
+          name: 'multi',
+          text: 'long paragraph',
+          rect: { x: 0, y: 40, width: 200, height: 120 },
+          style: { fontSize: 14, lineHeight: 20 },
+          textAutoResize: 'HEIGHT',
+        }),
+      ],
+    });
+    const ctx = makeCtx();
+    const plan = await buildImportCommands(ctx, specOf(root));
+    const byName = (n: string) => plan.commands.find((c) => c.params?.name === n)!;
+    expect(byName('single').params?.lineHeight).toBeUndefined();
+    expect(byName('multi').params?.lineHeight).toEqual({ unit: 'PIXELS', value: 20 });
+  });
+
   it('P2: canvas gradient becomes the main frame fill', async () => {
     const spec = specOf(el({ type: 'frame', name: 'body', rect: { x: 0, y: 0, width: 400, height: 300 } }));
     spec.canvas.background = undefined;

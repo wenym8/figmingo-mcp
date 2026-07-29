@@ -127,6 +127,7 @@ function textParams(el: ReplicaElement, rel: { x: number; y: number }, k: (n: nu
   const mapped = fontFromStyle({ fontFamily: s.fontFamily, fontWeight: s.fontWeight });
   const fontName = { family: mapped.family, style: s.fontStyleName || mapped.style };
   const hasRuns = (el.runs?.length ?? 0) >= 2;
+  const autoResize = textAutoResizeFor(el);
   const params: Record<string, unknown> = {
     name: el.name,
     // Runs path: keep the extractor-normalized text verbatim (run-boundary
@@ -138,11 +139,12 @@ function textParams(el: ReplicaElement, rel: { x: number; y: number }, k: (n: nu
     height: k(el.rect.height),
     fontSize: s.fontSize ?? 16,
     fontName,
-    textAutoResize: textAutoResizeFor(el),
+    textAutoResize: autoResize,
     // Plugin tries these same-family styles (nearest weight first) before
     // falling back to Regular; degradations surface in result.warnings.
     fallbackStyles: fontFallbackChain(s.fontWeight).filter((st) => st !== fontName.style),
   };
+  if (el.anchorRight && autoResize === 'WIDTH_AND_HEIGHT') params.anchorRight = true;
   if (hasRuns) {
     let off = 0;
     const runs: Array<Record<string, unknown>> = [];
@@ -164,7 +166,15 @@ function textParams(el: ReplicaElement, rel: { x: number; y: number }, k: (n: nu
     if (runs.length) params.runs = runs;
   }
   if (typeof s.letterSpacing === 'number') params.letterSpacing = { unit: 'PIXELS', value: s.letterSpacing };
-  if (typeof s.lineHeight === 'number') params.lineHeight = { unit: 'PIXELS', value: s.lineHeight };
+  // Single-line (WIDTH_AND_HEIGHT) texts intentionally drop the explicit
+  // PIXELS line height: with a fallback font Figma places the glyphs inside
+  // the fixed line box differently than Chromium did (icon/text rows ended up
+  // vertically misaligned). AUTO line height gives the font's natural box and
+  // the plugin recenters that box on the browser slot (see create_text).
+  // Multi-line/legacy texts keep PIXELS line height (wrap + leading fidelity).
+  if (typeof s.lineHeight === 'number' && autoResize !== 'WIDTH_AND_HEIGHT') {
+    params.lineHeight = { unit: 'PIXELS', value: s.lineHeight };
+  }
   const tc = textCaseFromStyle({ textTransform: s.textTransform });
   if (tc) params.textCase = tc;
   const align = textAlignFromStyle({ textAlign: s.textAlign });

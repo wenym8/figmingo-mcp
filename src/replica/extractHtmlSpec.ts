@@ -147,6 +147,13 @@ export interface RawDomNode {
   className?: string;
   /** Direct text-node content (element children excluded), whitespace-collapsed. */
   text?: string;
+  /**
+   * Measured bounding box of the element's own text (DOM Range union of the
+   * direct text nodes, page-absolute). Only set in-browser when the element
+   * carries own text; lets the synthetic label of a button-like box use the
+   * real glyph span instead of the whole container rect.
+   */
+  textRect?: { x: number; y: number; width: number; height: number };
   rect: { x: number; y: number; width: number; height: number };
   src?: string;
   svg?: string;
@@ -361,6 +368,47 @@ async function extractRawDom(
           }
           text = ownText(el);
         }
+        // Measure the actual glyph span of the element's own text (union of
+        // DOM Range rects). Button-like boxes get a synthetic label child —
+        // sizing that label from the real text span (instead of the whole
+        // container rect) keeps the label positioned/wrapped like the browser
+        // (a full-width box misreads as multi-line and top-anchors the label).
+        let textRect: { x: number; y: number; width: number; height: number } | undefined;
+        if (text) {
+          try {
+            let x0 = Infinity;
+            let y0 = Infinity;
+            let x1 = -Infinity;
+            let y1 = -Infinity;
+            const eat = (r: { left: number; top: number; right: number; bottom: number; width: number; height: number }) => {
+              if (r.width < 1 || r.height < 1) return;
+              x0 = Math.min(x0, r.left + window.scrollX);
+              y0 = Math.min(y0, r.top + window.scrollY);
+              x1 = Math.max(x1, r.right + window.scrollX);
+              y1 = Math.max(y1, r.bottom + window.scrollY);
+            };
+            if (mergeRuns) {
+              // Pure inline-formatting subtree: the whole contents IS the text.
+              const range = document.createRange();
+              range.selectNodeContents(el);
+              Array.from(range.getClientRects()).forEach(eat);
+            } else {
+              // Mixed content (e.g. icon + label): only the direct text nodes.
+              el.childNodes.forEach((n) => {
+                if (n.nodeType === 3 && (n.nodeValue ?? '').trim()) {
+                  const range = document.createRange();
+                  range.selectNode(n);
+                  Array.from(range.getClientRects()).forEach(eat);
+                }
+              });
+            }
+            if (x1 > x0 && y1 > y0) {
+              textRect = { x: Math.round(x0), y: Math.round(y0), width: Math.round(x1 - x0), height: Math.round(y1 - y0) };
+            }
+          } catch {
+            /* Range measurement is best-effort; the container rect is the fallback */
+          }
+        }
         if (rect.width < 1 || rect.height < 1) {
           // Zero-size elements only survive if they carry visible descendants.
           if (!children.length && !text) return null;
@@ -373,6 +421,7 @@ async function extractRawDom(
           className: el.getAttribute('class') || undefined,
           rect,
           text: text || undefined,
+          textRect,
           runs,
           overflow: cs.overflow,
           style: {
@@ -778,7 +827,26 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
     return runs.every(same) ? undefined : runs;
   };
 
-  const elementFor = (node: RawDomNode, parentKey: string): ReplicaElement | null => {
+  /**
+   * Right-edge anchor detection (Bug: right-aligned texts clipped after font
+   * fallback). A text whose right edge is flush with its parent's right edge
+   * (≤4px) is right-anchored in the source layout; with WIDTH_AND_HEIGHT the
+   * Figma box would grow rightward past the container and get clipped, so the
+   * importer/plugin re-anchor its x. Center-aligned labels and texts spanning
+   * nearly the full parent width (synthetic button labels) are excluded — for
+   * those the anchor is the center, not the right edge.
+   */
+  const anchorRightFor = (node: RawDomNode, parentNode: RawDomNode | undefined, autoResize: string): boolean | undefined => {
+    if (autoResize !== 'WIDTH_AND_HEIGHT' || !parentNode) return undefined;
+    const align = node.style.textAlign;
+    if (align === 'center' || align === 'middle') return undefined;
+    const pr = parentNode.rect;
+    if (pr.width < 1 || node.rect.width >= pr.width * 0.9) return undefined;
+    const rightGap = pr.x + pr.width - (node.rect.x + node.rect.width);
+    return rightGap >= -4 && rightGap <= 4 ? true : undefined;
+  };
+
+  const elementFor = (node: RawDomNode, parentKey: string, parentNode?: RawDomNode): ReplicaElement | null => {
     const id = nid();
     const key = parentKey ? `${parentKey}/${node.tag}` : node.tag;
     const name = node.id || (node.className ? String(node.className).split(/\s+/)[0] : node.tag);
@@ -832,7 +900,7 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
       return base;
     }
 
-    const kids = node.children.map((c) => elementFor(c, key)).filter((c): c is ReplicaElement => c !== null);
+    const kids = node.children.map((c) => elementFor(c, key, node)).filter((c): c is ReplicaElement => c !== null);
     const bgImageUrl = imageUrlFromBackground(node.style.backgroundImage);
     const hasBox =
       !!parseCssColor(node.style.backgroundColor) ||
@@ -855,23 +923,29 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
         base.style = styleOf(node, true);
         base.runs = mapRuns(node, base.style);
         base.textAutoResize = textAutoResizeFor(node);
+        base.anchorRight = anchorRightFor(node, parentNode, base.textAutoResize);
         return base;
       }
       // Button/input-like: visible box + label → frame with synthetic text child.
+      // The label uses the MEASURED text span (textRect) when available: the
+      // full container rect would misread as multi-line (box height ÷ line
+      // height) and top-anchor the label inside the button.
       base.type = 'frame';
       base.style = styleOf(node, false);
       const textStyle = styleOf(node, true);
+      const labelRect = node.textRect ?? node.rect;
       base.children = [
         {
           key: `${key}/text`,
           nodeId: nid(),
           name: `${name}-label`,
           type: 'text',
-          rect: { ...node.rect },
+          rect: { ...labelRect },
           style: textStyle,
           text: node.text,
           runs: mapRuns(node, textStyle),
-          textAutoResize: textAutoResizeFor(node),
+          textAutoResize: textAutoResizeFor({ ...node, rect: labelRect }),
+          anchorRight: anchorRightFor({ ...node, rect: labelRect }, node, textAutoResizeFor({ ...node, rect: labelRect })),
         },
       ];
       return base;
@@ -890,17 +964,19 @@ export function rawDomToReplicaSpec(raw: RawDomResult, opts: DomToSpecOptions = 
     }
     if (node.text) {
       const labelStyle = styleOf(node, true);
+      const labelRect = node.textRect ?? node.rect; // measured text span (see button-like branch above)
       base.children = [
         {
           key: `${key}/text`,
           nodeId: nid(),
           name: `${name}-label`,
           type: 'text',
-          rect: { ...node.rect },
+          rect: { ...labelRect },
           style: labelStyle,
           text: node.text,
           runs: mapRuns(node, labelStyle),
-          textAutoResize: textAutoResizeFor(node),
+          textAutoResize: textAutoResizeFor({ ...node, rect: labelRect }),
+          anchorRight: anchorRightFor({ ...node, rect: labelRect }, node, textAutoResizeFor({ ...node, rect: labelRect })),
         },
         ...kids,
       ];

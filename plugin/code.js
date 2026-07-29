@@ -231,6 +231,31 @@ const handlers = {
             // resize would fight auto-width (Chromium→Figma metric drift otherwise
             // wraps single-line text into two lines).
         }
+        // Post-layout re-anchoring for auto-sized single-line text (WIDTH_AND_HEIGHT
+        // only): Figma sized the box from content AFTER our x/y were applied, and
+        // with fallback fonts / AUTO line height that box differs from the
+        // Chromium-measured rect. Re-anchor so what the extractor pinned survives:
+        //  - anchorRight: keep the original RIGHT edge (right-aligned prices/labels
+        //    otherwise grow rightward past the container and get clipsContent-cut).
+        //  - vertical center: keep the box centered on the original slot (the
+        //    browser vertically centers the glyph em-box in the line box; Figma's
+        //    AUTO-height box must be recentered the same way or icon+text rows
+        //    drift apart). No-op when the heights already match.
+        const reanchor = () => {
+            if (autoResize !== 'WIDTH_AND_HEIGHT')
+                return;
+            if (params.anchorRight && params.width) {
+                const dx = text.width - params.width;
+                if (Math.abs(dx) >= 0.25)
+                    text.x = params.x - dx;
+            }
+            if (params.height) {
+                const dy = (text.height - params.height) / 2;
+                if (Math.abs(dy) >= 0.25)
+                    text.y = params.y - dy;
+            }
+        };
+        reanchor();
         // Styled runs (merged inline-formatting text): per-range fonts/fills.
         // Degradation ladder: a run that fails keeps the node-wide base font +
         // warning; a wholesale failure of the runs loop leaves the legacy
@@ -256,6 +281,10 @@ const handlers = {
                 runWarnings.push(`styled runs failed entirely: ${err instanceof Error ? err.message : String(err)}; kept base font`);
             }
         }
+        // Runs may have changed the measured box (per-range fonts differ) —
+        // re-apply the same re-anchoring once more after run styling.
+        if (params.runs?.length)
+            reanchor();
         return {
             nodeId: text.id,
             fontApplied: font,

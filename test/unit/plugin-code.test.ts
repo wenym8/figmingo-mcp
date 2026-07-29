@@ -50,6 +50,26 @@ function makeNode(type: string) {
       (this.rangeFills ||= []).push([start, end, fills]);
     },
   };
+  if (type === 'TEXT') {
+    // Content-driven sizing simulation (Figma's WIDTH_AND_HEIGHT): when the
+    // test enables figma.__autoSizeTexts, assigning characters grows the box
+    // (10px/char wide, 1.5× fontSize tall — deliberately wider/taller than a
+    // Chromium-measured rect, mimicking fallback-font metric drift).
+    let chars = '';
+    Object.defineProperty(node, 'characters', {
+      get: () => chars,
+      set: (v: string) => {
+        chars = String(v);
+        const figma = (globalThis as any).figma;
+        const sim = figma?.__autoSizeTexts;
+        if (sim) {
+          // true → growth simulation; {width,height} → exact size simulation.
+          node.width = typeof sim === 'object' ? sim.width : Math.max(1, chars.length * 10);
+          node.height = typeof sim === 'object' ? sim.height : Math.round((node.fontSize || 16) * 1.5);
+        }
+      },
+    });
+  }
   return node;
 }
 
@@ -539,5 +559,127 @@ describe('plugin code.ts — optimization round', () => {
     const final = msgs.find((m) => m.type === 'command-result');
     expect(final?.result.results.every((r: any) => r.ok)).toBe(true);
     expect(figma.__fontLoadCount('PreFam Bold') - before).toBe(1); // preloaded once, then cached
+  });
+});
+
+describe('plugin code.ts — post-layout text re-anchoring (WIDTH_AND_HEIGHT)', () => {
+  const figma = () => (globalThis as any).figma;
+
+  it('anchorRight shifts x left so the original right edge survives content growth', async () => {
+    figma().__autoSizeTexts = true;
+    try {
+      const msgs = await runCommand('ra1', 'create_text', {
+        characters: '$1,615',
+        fontName: { family: 'Inter', style: 'Regular' },
+        x: 329,
+        y: 10,
+        width: 44,
+        height: 22,
+        textAutoResize: 'WIDTH_AND_HEIGHT',
+        anchorRight: true,
+      });
+      expect(msgs.find((m) => m.type === 'command-result')?.ok).toBe(true);
+      const text = figma().currentPage.children.at(-1);
+      expect(text.width).toBe(60); // 6 chars × 10px — grew like a fallback font
+      expect(text.x).toBe(329 - (60 - 44)); // right edge pinned at 329+44
+      // Vertical recenter: auto-sized box (16×1.5=24) centered on the 22px slot.
+      expect(text.y).toBe(10 - (24 - 22) / 2);
+    } finally {
+      delete figma().__autoSizeTexts;
+    }
+  });
+
+  it('without anchorRight, x stays; vertical recenter still applies', async () => {
+    figma().__autoSizeTexts = true;
+    try {
+      await runCommand('ra2', 'create_text', {
+        characters: 'Add',
+        fontName: { family: 'Inter', style: 'Regular' },
+        x: 24,
+        y: 2,
+        width: 26,
+        height: 20,
+        fontSize: 14,
+        textAutoResize: 'WIDTH_AND_HEIGHT',
+      });
+      const text = figma().currentPage.children.at(-1);
+      expect(text.width).toBe(30);
+      expect(text.x).toBe(24); // left anchor untouched
+      // fontSize set after characters in the handler → stub height used default 16 → 24
+      expect(text.y).toBe(2 - (text.height - 20) / 2);
+    } finally {
+      delete figma().__autoSizeTexts;
+    }
+  });
+
+  it('fixed-width modes (HEIGHT / NONE) are never re-anchored', async () => {
+    figma().__autoSizeTexts = true;
+    try {
+      await runCommand('ra3', 'create_text', {
+        characters: 'paragraph text',
+        fontName: { family: 'Inter', style: 'Regular' },
+        x: 5,
+        y: 6,
+        width: 200,
+        height: 60,
+        textAutoResize: 'HEIGHT',
+        anchorRight: true,
+      });
+      const text = figma().currentPage.children.at(-1);
+      expect(text.x).toBe(5);
+      expect(text.y).toBe(6);
+      expect(text.width).toBe(200); // HEIGHT keeps the fixed width
+    } finally {
+      delete figma().__autoSizeTexts;
+    }
+  });
+
+  it('matching measured size is a no-op (no sub-pixel jitter)', async () => {
+    figma().__autoSizeTexts = { width: 50, height: 22 };
+    try {
+      await runCommand('ra4', 'create_text', {
+        characters: 'exact',
+        fontName: { family: 'Inter', style: 'Regular' },
+        x: 7,
+        y: 8,
+        width: 50,
+        height: 22,
+        textAutoResize: 'WIDTH_AND_HEIGHT',
+        anchorRight: true,
+      });
+      const text = figma().currentPage.children.at(-1);
+      expect(text.x).toBe(7);
+      expect(text.y).toBe(8);
+    } finally {
+      delete figma().__autoSizeTexts;
+    }
+  });
+
+  it('styled runs path: re-anchoring still applies after per-range fonts', async () => {
+    figma().__autoSizeTexts = true;
+    try {
+      const msgs = await runCommand('ra5', 'create_text', {
+        characters: 'NECTAR50',
+        fontName: { family: 'Inter', style: 'Regular' },
+        x: 28,
+        y: 2,
+        width: 68,
+        height: 20,
+        textAutoResize: 'WIDTH_AND_HEIGHT',
+        anchorRight: true,
+        runs: [
+          { start: 0, end: 4, fontName: { family: 'Inter', style: 'Regular' } },
+          { start: 4, end: 8, fontName: { family: 'Inter', style: 'Bold' } },
+        ],
+      });
+      expect(msgs.find((m) => m.type === 'command-result')?.ok).toBe(true);
+      const text = figma().currentPage.children.at(-1);
+      expect(text.rangeFonts).toHaveLength(2);
+      expect(text.width).toBe(80);
+      expect(text.x).toBe(28 - (80 - 68)); // right edge pinned at 28+68
+      expect(text.y).toBe(2 - (text.height - 20) / 2);
+    } finally {
+      delete figma().__autoSizeTexts;
+    }
   });
 });
