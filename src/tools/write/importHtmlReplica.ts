@@ -86,7 +86,10 @@ function radiusParam(style: SpecStyle): number | number[] | undefined {
 /** Shared visual-style params for frame/rectangle/image commands. */
 function visualParams(style: SpecStyle, out: Record<string, unknown>) {
   const fills = fillsFor(style);
-  if (fills) out.fills = fills;
+  // HTML semantics: an element without a background is TRANSPARENT. Figma's
+  // default frame/rect fill is white, so we must explicitly clear fills —
+  // otherwise unstyled containers paint an opaque white sheet over siblings.
+  out.fills = fills ?? [];
   const strokes = strokesFor(style);
   if (strokes) {
     out.strokes = strokes.strokes;

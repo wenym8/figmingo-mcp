@@ -219,9 +219,26 @@ const handlers = {
         node.fills = requested;
         // Bridge quirk guard: some nodes (observed on certain top-level frames)
         // report ok but silently keep their previous fills. Read back and warn.
+        // NOTE: Figma normalizes paints on assignment (adds visible/opacity/
+        // blendMode, rounds channels), so raw JSON comparison false-positives.
+        // Compare semantically: count + per-paint type/color/opacity.
+        const norm = (paints) => {
+            if (!Array.isArray(paints))
+                return String(paints);
+            return paints
+                .map((p) => {
+                if (!p || typeof p !== 'object')
+                    return String(p);
+                const c = p.color
+                    ? [p.color.r, p.color.g, p.color.b].map((v) => (typeof v === 'number' ? v.toFixed(3) : v)).join(',')
+                    : '';
+                return `${p.type}:${c}:${p.opacity ?? 1}:${p.visible ?? true}`;
+            })
+                .join('|');
+        };
         let warning;
         try {
-            if (JSON.stringify(node.fills) !== JSON.stringify(requested)) {
+            if (norm(node.fills) !== norm(requested)) {
                 warning = `set_fills did not stick on ${node.id} (${node.type}): Figma kept the previous fills`;
             }
         }
