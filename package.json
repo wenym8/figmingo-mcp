@@ -1,6 +1,6 @@
 {
   "name": "figmingo-mcp",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Local-first Figma MCP server. Full read-side parity with the official Figma MCP on free plans, HTML 1:1 replica tooling with three-gate parity verification, and write-to-canvas via a companion plugin bridge.",
   "license": "MIT",
   "type": "module",

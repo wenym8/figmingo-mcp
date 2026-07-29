@@ -163,6 +163,16 @@ async function extractRawDom(
     };
     const raw = await page.evaluate(async (p) => {
       const warnings: string[] = [];
+      // Skeleton detection: a JS-rendered page whose hydration was blocked
+      // (bot protection 403ing the app's API/JS) leaves almost no text.
+      // Extraction still succeeds — warn so callers don't trust the result.
+      if (document.readyState !== 'complete') {
+        warnings.push(
+          `page never reached readyState=complete (got "${document.readyState}") — ` +
+            'the site may be bot-protected or slow; the result may be an unhydrated skeleton. ' +
+            'Workaround: save the rendered HTML from a real browser session and use htmlPath.',
+        );
+      }
       const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'template', 'head', 'meta', 'link', 'title', 'br']);
       // Elements whose vector content should be rasterized to PNG (retina).
       const rasterQueue: Array<{ node: Record<string, unknown>; el: Element; kind: 'svg' | 'svg-img' }> = [];

@@ -136,23 +136,55 @@ export async function openPage(browser: Awaited<ReturnType<typeof launchBrowser>
     const resolved = path.resolve(opts.htmlPath);
     await page.goto(`file://${resolved}`, { waitUntil: 'load', timeout });
   } else if (opts.url) {
-    await page.goto(opts.url, { waitUntil: 'networkidle', timeout });
+    // domcontentloaded (not networkidle): heavy live pages run trackers/ads
+    // that keep connections open indefinitely, so networkidle can blow straight
+    // past the MCP client's request timeout. Idle wait becomes best-effort.
+    const navTimeout = opts.timeoutMs ?? 30000;
+    await page.goto(opts.url, { waitUntil: 'domcontentloaded', timeout: navTimeout });
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    // Bounded stability wait: JS-rendered pages (React/Next hydration) keep
+    // mutating the DOM after domcontentloaded — without this we extract the
+    // skeleton. Poll size/text signature until stable (≤15s).
+    await page
+      .evaluate(async () => {
+        const sig = () =>
+          [document.documentElement.scrollHeight, document.body?.childElementCount ?? 0, (document.body?.innerText ?? '').length].join('|');
+        let prev = sig();
+        let stable = 0;
+        const t0 = Date.now();
+        while (Date.now() - t0 < 15000) {
+          await new Promise((r) => setTimeout(r, 500));
+          const cur = sig();
+          if (cur === prev) {
+            if (++stable >= 2) return;
+          } else {
+            stable = 0;
+          }
+          prev = cur;
+        }
+      })
+      .catch(() => {});
   } else {
     throw new Error('render: one of url / htmlPath / html is required');
   }
   if (opts.waitForImages !== false) {
-    await page.evaluate(() => {
-      const imgs = Array.from(document.querySelectorAll('img'));
-      const pending = imgs.filter((img) => !img.complete);
-      const all = pending.map(
-        (img) =>
-          new Promise<void>((resolve) => {
-            img.onload = () => resolve();
-            img.onerror = () => resolve();
-          }),
-      );
-      return Promise.all([Promise.all(all), (document as Document & { fonts?: { ready: Promise<unknown> } }).fonts?.ready]);
-    });
+    // Bounded: a live page may never finish every image/font — never let this
+    // push the whole call past the client's request timeout.
+    await Promise.race([
+      page.evaluate(() => {
+        const imgs = Array.from(document.querySelectorAll('img'));
+        const pending = imgs.filter((img) => !img.complete);
+        const all = pending.map(
+          (img) =>
+            new Promise<void>((resolve) => {
+              img.onload = () => resolve();
+              img.onerror = () => resolve();
+            }),
+        );
+        return Promise.all([Promise.all(all), (document as Document & { fonts?: { ready: Promise<unknown> } }).fonts?.ready]);
+      }),
+      page.waitForTimeout(12000),
+    ]).catch(() => {});
   }
   if (opts.hideFixed) {
     await page.evaluate(() => {
