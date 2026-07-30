@@ -612,3 +612,67 @@ describe('replaceExisting', () => {
     expect(calls.map((c) => c.command)).toEqual(['batch']);
   });
 });
+
+describe('clipsContent defaults (CSS overflow semantics)', () => {
+  it('container frames default to clipsContent:false (CSS overflow:visible); explicit true is preserved', async () => {
+    const root = el({
+      type: 'frame',
+      name: 'body',
+      rect: { x: 0, y: 0, width: 400, height: 300 },
+      children: [
+        el({
+          type: 'frame',
+          name: 'open-container',
+          rect: { x: 0, y: 0, width: 200, height: 100 },
+          children: [el({ type: 'frame', name: 'leaf', rect: { x: 0, y: 0, width: 10, height: 10 }, style: { backgroundColor: '#112233' } })],
+        }),
+        el({
+          type: 'frame',
+          name: 'clip-container',
+          rect: { x: 0, y: 120, width: 200, height: 100 },
+          clipsContent: true,
+          children: [el({ type: 'frame', name: 'leaf2', rect: { x: 0, y: 0, width: 10, height: 10 }, style: { backgroundColor: '#112233' } })],
+        }),
+      ],
+    });
+    const ctx = makeCtx();
+    const plan = await buildImportCommands(ctx, specOf(root));
+    const open = plan.commands.find((c) => c.params?.name === 'open-container')!;
+    expect(open.command).toBe('create_frame');
+    expect(open.params?.clipsContent).toBe(false);
+    const clip = plan.commands.find((c) => c.params?.name === 'clip-container')!;
+    expect(clip.params?.clipsContent).toBe(true);
+  });
+
+  it('a card with a giant same-color shadow keeps effects and an unclipped parent chain (viewport-bleed pattern)', async () => {
+    const root = el({
+      type: 'frame',
+      name: 'body',
+      rect: { x: 0, y: 0, width: 1440, height: 800 },
+      children: [
+        el({
+          type: 'frame',
+          name: 'grid',
+          rect: { x: 955, y: 124, width: 405, height: 600 },
+          children: [
+            el({
+              type: 'frame',
+              name: 'card',
+              rect: { x: 955, y: 124, width: 405, height: 600 },
+              style: { backgroundColor: '#f5f7fc', boxShadow: 'rgb(245, 247, 252) 400px 0px 0px 400px' },
+              children: [el({ type: 'frame', name: 'inner', rect: { x: 987, y: 150, width: 20, height: 20 }, style: { backgroundColor: '#112233' } })],
+            }),
+          ],
+        }),
+      ],
+    });
+    const ctx = makeCtx();
+    const plan = await buildImportCommands(ctx, specOf(root));
+    const grid = plan.commands.find((c) => c.params?.name === 'grid')!;
+    expect(grid.params?.clipsContent).toBe(false); // shadow must paint beyond the parent
+    const card = plan.commands.find((c) => c.params?.name === 'card')!;
+    expect(card.command).toBe('create_frame');
+    expect(card.params?.effects).toMatchObject([{ type: 'DROP_SHADOW', offset: { x: 400, y: 0 }, spread: 400 }]);
+    expect(card.params?.clipsContent).toBe(false);
+  });
+});

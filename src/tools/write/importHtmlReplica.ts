@@ -479,7 +479,12 @@ export async function buildImportCommands(
         y: rel.y,
         width: k(el.rect.width),
         height: k(el.rect.height),
-        clipsContent: el.clipsContent ?? true,
+        // CSS default overflow is VISIBLE: children and box-shadows paint
+        // outside the element's box (e.g. a card whose giant same-color
+        // drop-shadow extends its background to the viewport edge). Default
+        // to NOT clipping; the extractor sets clipsContent:true only where
+        // computed overflow is hidden/scroll/auto/clip.
+        clipsContent: el.clipsContent ?? false,
       };
       visualParams(el.style, params);
       commands.push({ command: 'create_frame', params, as: varName });
