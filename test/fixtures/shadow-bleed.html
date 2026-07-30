@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<!-- Distilled regression fixture for the Nectar-cart right-edge bug class:
+     an overflow:hidden FULL-VIEWPORT wrapper > narrower grid > card whose
+     giant same-color box-shadow bleeds its background to the viewport edge,
+     plus an inline text run overflowing its element box. The replica must
+     keep the shadow visible past the grid's right edge (only the viewport-
+     wide wrapper may clip) and must not clip overflowing text. -->
+<html>
+<head>
+<style>
+  body { margin: 0; background: #ffffff; font-family: sans-serif; }
+  .page { overflow: hidden; width: 1000px; }
+  .grid { width: 840px; margin: 0 auto; display: flex; }
+  .spacer { width: 540px; }
+  .card { width: 300px; height: 400px; background: #f5f7fc;
+          box-shadow: #f5f7fc 300px 0 0 300px; padding: 20px; box-sizing: border-box; }
+  .price-row { text-align: right; }
+  .overflow-line { width: 60px; white-space: nowrap; overflow: visible; }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="grid">
+      <div class="spacer"></div>
+      <div class="card">
+        <p class="price-row">$1,615</p>
+        <p class="overflow-line">See if you qualify</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

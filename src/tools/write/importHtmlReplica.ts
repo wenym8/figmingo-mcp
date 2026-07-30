@@ -744,18 +744,46 @@ export const importHtmlReplica: ToolDef = {
           outPath: shotPath,
         });
         const scale = args.scale ?? 1;
-        const bands = spec.sections.map((s) => ({
-          name: s.name,
-          y0: Math.round(s.rect.y * scale),
-          y1: Math.round((s.rect.y + s.rect.height) * scale),
-        }));
+        // Region-aware verification: a full-page average dilutes localized
+        // errors (an 80px-wide wrong right edge is ~4% of pixels and used to
+        // PASS the old 5% global gate). Split the page into horizontal bands
+        // plus dedicated left/right edge strips so a localized mistake fails
+        // loudly and the report says WHERE it is.
+        const cw = spec.canvas.width * scale;
+        const ch = spec.canvas.height * scale;
+        const edgeW = Math.max(60, Math.round(cw * 0.08));
+        const nBands = 8;
+        const bandH = Math.ceil(ch / nBands);
+        const bands: { name: string; y0: number; y1: number; x0?: number; x1?: number }[] = [];
+        for (let i = 0; i < nBands; i++) {
+          bands.push({ name: `band${i + 1}/${nBands}`, y0: i * bandH, y1: Math.min(ch, (i + 1) * bandH) });
+        }
+        bands.push({ name: 'LEFT-EDGE', y0: 0, y1: ch, x0: 0, x1: edgeW });
+        bands.push({ name: 'RIGHT-EDGE', y0: 0, y1: ch, x0: cw - edgeW, x1: cw });
         const diff = diffPngBuffers(fs.readFileSync(shotPath), Buffer.from(exported.base64, 'base64'), bands);
+        const GLOBAL_MAX = 0.02;
+        const BAND_MAX = 0.05;
+        const EDGE_MAX = 0.03;
+        const isEdge = (n: string) => n.endsWith('-EDGE');
+        const failedRegions = diff.bands.filter((b) => b.ratio > (isEdge(b.name) ? EDGE_MAX : BAND_MAX));
+        const passed = diff.diffRatio <= GLOBAL_MAX && failedRegions.length === 0;
         verification = {
-          passed: diff.diffRatio <= 0.05,
+          passed,
           diffRatio: Math.round(diff.diffRatio * 1e6) / 1e6,
           sizeMismatch: diff.sizeMismatch,
-          sections: diff.bands.map((b) => ({ name: b.name, ratio: Math.round(b.ratio * 1e6) / 1e6 })),
+          thresholds: { global: GLOBAL_MAX, band: BAND_MAX, edge: EDGE_MAX },
+          ...(failedRegions.length
+            ? { failedRegions: failedRegions.map((b) => ({ region: b.name, ratio: Math.round(b.ratio * 1e4) / 1e4 })) }
+            : {}),
+          regions: diff.bands.map((b) => ({ name: b.name, ratio: Math.round(b.ratio * 1e6) / 1e6 })),
         };
+        if (!passed) {
+          outcome.warnings.push(
+            `verifyAfterImport: visual diff above threshold (${(diff.diffRatio * 100).toFixed(2)}% global` +
+              (failedRegions.length ? `; worst regions: ${failedRegions.map((b) => `${b.name} ${(b.ratio * 100).toFixed(1)}%`).join(', ')}` : '') +
+              `)`,
+          );
+        }
       } catch (err) {
         outcome.warnings.push(`verifyAfterImport failed: ${(err as Error).message}`);
         verification = { passed: false, error: (err as Error).message };

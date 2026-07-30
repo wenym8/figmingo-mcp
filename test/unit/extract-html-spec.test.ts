@@ -747,3 +747,115 @@ describe('extractHtmlToReplicaSpec — optimization round (playwright, inline ht
     }
   }, 60000);
 });
+
+describe('collapse + clipsContent box semantics', () => {
+  it('a LARGER overflow:hidden wrapper survives collapse instead of shrinking its clip box onto the child', () => {
+    const spec = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({
+              tag: 'div',
+              className: 'wide-clipper',
+              overflow: 'hidden',
+              rect: { x: 0, y: 0, width: 1440, height: 1776 },
+              style: {},
+              children: [
+                node({
+                  tag: 'div',
+                  className: 'narrow-grid',
+                  rect: { x: 80, y: 124, width: 1280, height: 1310 },
+                  style: {},
+                  children: [
+                    node({
+                      tag: 'div',
+                      className: 'card',
+                      rect: { x: 955, y: 124, width: 405, height: 1310 },
+                      style: { backgroundColor: 'rgb(245,247,252)', boxShadow: 'rgb(245, 247, 252) 400px 0px 0px 400px' },
+                      children: [node({ tag: 'div', className: 'inner', rect: { x: 987, y: 150, width: 20, height: 20 }, style: { backgroundColor: 'rgb(1,1,1)' } })],
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ]),
+    );
+    const root = spec.sections[0].elements[0];
+    // The 1440-wide clipping wrapper must still exist as its own frame…
+    const clipper = root.children!.find((c) => c.name === 'wide-clipper')!;
+    expect(clipper).toBeDefined();
+    expect(clipper.clipsContent).toBe(true);
+    // …and nothing inside inherits the clip: the style-less grid collapses
+    // into the card, and the card must stay unclipped so its 400px shadow
+    // paints past the grid's right edge up to 1440.
+    const card = clipper.children!.find((c) => c.name === 'card')!;
+    expect(card.clipsContent).toBeUndefined();
+    expect(card.style.boxShadow).toContain('400px');
+  });
+
+  it('same-box clipping wrapper still collapses and propagates clipsContent', () => {
+    const spec = rawDomToReplicaSpec(
+      raw([
+        node({
+          tag: 'body',
+          style: {},
+          children: [
+            node({
+              tag: 'div',
+              className: 'clipper',
+              overflow: 'hidden',
+              rect: { x: 10, y: 10, width: 200, height: 100 },
+              style: {},
+              children: [
+                node({
+                  tag: 'div',
+                  className: 'same-box',
+                  rect: { x: 10, y: 10, width: 200, height: 100 },
+                  style: { backgroundColor: 'rgb(9,9,9)' },
+                  children: [node({ tag: 'div', className: 'inner', rect: { x: 20, y: 20, width: 20, height: 20 }, style: { backgroundColor: 'rgb(1,1,1)' } })],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ]),
+    );
+    const merged = spec.sections[0].elements[0].children![0];
+    expect(merged.name).toBe('same-box');
+    expect(merged.clipsContent).toBe(true);
+  });
+});
+
+describe('extractHtmlToReplicaSpec (playwright, shadow-bleed regression)', () => {
+  const fixture = path.join(__dirname, '..', 'fixtures', 'shadow-bleed.html');
+
+  it('viewport-bleed shadow: only the viewport-wide clipper clips; grid and card stay open', async () => {
+    const { spec } = await extractHtmlToReplicaSpec({ htmlPath: fixture, viewport: { width: 1000, height: 600 } });
+    type El = (typeof spec.sections)[number]['elements'][number];
+    const flat: El[] = [];
+    const visit = (el: El) => { flat.push(el); el.children?.forEach(visit); };
+    spec.sections.forEach((s) => s.elements.forEach(visit));
+
+    const byName = (n: string) => flat.find((e) => e.name?.includes(n));
+    // Card keeps its shadow and its background…
+    const card = byName('card')!;
+    expect(card).toBeDefined();
+    expect(card.style.boxShadow).toContain('300px');
+    expect(card.clipsContent).toBeUndefined();
+    // …and the ONLY clipping frame anywhere is the viewport-wide wrapper
+    // (the style-less narrower grid collapses away and must not inherit the
+    // clip — that was the bug that killed the shadow at the grid's edge).
+    const page = byName('page')!;
+    expect(page.clipsContent).toBe(true);
+    expect(page.rect.width).toBe(1000);
+    const clippers = flat.filter((e) => e.clipsContent);
+    expect(clippers.map((c) => c.name)).toEqual([page.name]);
+    // Overflowing nowrap text is preserved with its content.
+    const line = byName('overflow-line')!;
+    expect(line.text ?? line.children?.[0]?.text).toContain('See if you qualify');
+  }, 60000);
+});

@@ -52,4 +52,28 @@ describe('diffPngBuffers', () => {
     expect(res.width).toBe(10);
     expect(res.diffRatio).toBe(0);
   });
+
+  it('rectangular edge strips localize a right-edge-only error that the global average dilutes', () => {
+    // 4px-wide wrong strip on the right edge = 4% of all pixels: passes any
+    // sane global gate, yet is a glaring visual defect (the Nectar case).
+    const w = 100;
+    const strip = 4;
+    const base = png(w, w, () => [245, 247, 252, 255]);
+    const broken = png(w, w, (x) => (x >= w - strip ? [255, 255, 255, 255] : [245, 247, 252, 255]));
+    const res = diffPngBuffers(base, broken, [
+      { name: 'LEFT-EDGE', y0: 0, y1: w, x0: 0, x1: 8 },
+      { name: 'RIGHT-EDGE', y0: 0, y1: w, x0: w - 8, x1: w },
+      { name: 'band', y0: 0, y1: w },
+    ]);
+    // Global only 4% — the old whole-page gate would call this a pass.
+    expect(res.diffRatio).toBeCloseTo(0.04);
+    // The right edge strip isolates it: 50% of the strip is wrong.
+    const right = res.bands.find((b) => b.name === 'RIGHT-EDGE')!;
+    expect(right.ratio).toBeCloseTo(0.5);
+    const left = res.bands.find((b) => b.name === 'LEFT-EDGE')!;
+    expect(left.ratio).toBe(0);
+    // Full-width band dilutes back to 4% — proving x-ranges are required.
+    const band = res.bands.find((b) => b.name === 'band')!;
+    expect(band.ratio).toBeCloseTo(0.04);
+  });
 });

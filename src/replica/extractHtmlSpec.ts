@@ -670,6 +670,11 @@ function hasVisualStyle(style: SpecStyle): boolean {
  * one frame child into that child (chains collapse transitively), and drop
  * style-less leaf frames with no content. Clipping flags survive the merge.
  */
+function rectsApproxEqual(a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }): boolean {
+  const tol = 1;
+  return Math.abs(a.x - b.x) <= tol && Math.abs(a.y - b.y) <= tol && Math.abs(a.width - b.width) <= tol && Math.abs(a.height - b.height) <= tol;
+}
+
 export function collapseReplicaContainers(root: ReplicaElement): ReplicaElement {
   const visit = (el: ReplicaElement): ReplicaElement | null => {
     if (el.type !== 'frame') return el;
@@ -687,6 +692,11 @@ export function collapseReplicaContainers(root: ReplicaElement): ReplicaElement 
       out.children[0].type === 'frame'
     ) {
       const child = out.children[0];
+      // A clipping wrapper whose box DIFFERS from the child's must survive the
+      // merge: its clip region is its own box. Stamping clipsContent onto a
+      // smaller child would shrink the clip region and cut off things the
+      // browser shows (e.g. a grandchild's box-shadow painting past the child).
+      if (out.clipsContent && !rectsApproxEqual(out.rect, child.rect)) break;
       child.clipsContent = child.clipsContent || out.clipsContent;
       child.key = out.key; // keep the outer (shallower) key for stable paths
       out = child;
