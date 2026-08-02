@@ -252,6 +252,33 @@ const handlers = {
         //    browser vertically centers the glyph em-box in the line box; Figma's
         //    AUTO-height box must be recentered the same way or icon+text rows
         //    drift apart). No-op when the heights already match.
+        // Metric compensation: a fallback font renders WIDER than the Chromium-
+        // measured rect the spec carries (Roobert → Inter ≈ +5-8%). With
+        // WIDTH_AND_HEIGHT the box grows that much and collides with the next
+        // inline sibling (icon / "(1 Item)" / info badge), which the absolute
+        // layout still places at the old x. Shrink letter-spacing so the rendered
+        // width matches the extracted width — layout-preserving, unlike moving
+        // siblings. Only compensates growth, never stretches.
+        const metricCompensate = () => {
+            if (autoResize !== 'WIDTH_AND_HEIGHT')
+                return;
+            if (!params.width || !text.characters)
+                return;
+            const charCount = Array.from(text.characters).length;
+            if (charCount < 3)
+                return;
+            const overflow = text.width - params.width;
+            if (overflow < 1)
+                return; // smaller than extraction is harmless
+            const fontSize = typeof text.fontSize === 'number' ? text.fontSize : 16;
+            const existing = typeof text.letterSpacing === 'object' && text.letterSpacing.unit === 'PIXELS' ? text.letterSpacing.value : 0;
+            // Per-char spacing that removes the overflow, clamped to stay readable.
+            const adjust = Math.min(0, Math.max(-0.08 * fontSize, existing - overflow / charCount));
+            if (Math.abs(adjust - existing) < 0.05)
+                return;
+            text.letterSpacing = { unit: 'PIXELS', value: Math.round(adjust * 100) / 100 };
+        };
+        metricCompensate();
         const reanchor = () => {
             if (autoResize !== 'WIDTH_AND_HEIGHT')
                 return;

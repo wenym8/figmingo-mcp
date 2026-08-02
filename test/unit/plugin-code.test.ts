@@ -684,3 +684,52 @@ describe('plugin code.ts — post-layout text re-anchoring (WIDTH_AND_HEIGHT)', 
     }
   });
 });
+
+describe('metric compensation (fallback-font width drift)', () => {
+  it('single-line auto-sized text that outgrows the extracted width gets negative letter-spacing', async () => {
+    const figma = (globalThis as any).figma;
+    figma.__autoSizeTexts = true;
+    try {
+      const msgs = await runCommand('mc1', 'create_text', {
+        characters: 'Your Cart',
+        name: 'heading',
+        x: 10, y: 10,
+        width: 60, // extraction measured 60px; sim renders 9 chars * 10px = 90px
+        height: 24,
+        fontSize: 24,
+        fontName: { family: 'Inter', style: 'Semi Bold' },
+        textAutoResize: 'WIDTH_AND_HEIGHT',
+      });
+      const result = msgs.find((m) => m.type === 'command-result');
+      expect(result?.ok).toBe(true);
+      const node = (globalThis as any).figma.currentPage.children[0].children.find((c: any) => c.name === 'heading') ??
+        (globalThis as any).figma.currentPage.children.find((c: any) => c.name === 'heading');
+      expect(node.letterSpacing).toMatchObject({ unit: 'PIXELS' });
+      expect(node.letterSpacing.value).toBeLessThan(0);
+      // 30px overflow over 9 chars = 3.33/char, clamped to 8% of 24px = 1.92
+      expect(node.letterSpacing.value).toBeCloseTo(-1.92, 1);
+    } finally {
+      figma.__autoSizeTexts = false;
+    }
+  });
+
+  it('no compensation when rendered width already fits', async () => {
+    const figma = (globalThis as any).figma;
+    figma.__autoSizeTexts = true;
+    try {
+      await runCommand('mc2', 'create_text', {
+        characters: 'Add',
+        name: 'btn',
+        width: 100, // wider than the 30px sim render
+        height: 24,
+        fontSize: 16,
+        textAutoResize: 'WIDTH_AND_HEIGHT',
+      });
+      const node = (globalThis as any).figma.currentPage.children.find((c: any) => c.name === 'btn') ??
+        (globalThis as any).figma.currentPage.children[0]?.children?.find((c: any) => c.name === 'btn');
+      expect(node.letterSpacing === undefined || node.letterSpacing.value >= 0).toBe(true);
+    } finally {
+      figma.__autoSizeTexts = false;
+    }
+  });
+});
