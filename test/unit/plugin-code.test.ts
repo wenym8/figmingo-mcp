@@ -474,6 +474,7 @@ describe('plugin code.ts — optimization round', () => {
     const figma = (globalThis as any).figma;
     figma.__failFonts.add('GhostFam Bold');
     figma.__failFonts.add('GhostFam SemiBold');
+    figma.__failFonts.add('GhostFam Semi Bold'); // spaced spelling variant
     figma.__failFonts.add('GhostFam Regular');
     const msgs = await runCommand('wf1', 'create_text', {
       characters: 'heavy',

@@ -113,8 +113,18 @@ async function loadFont(fontName?: { family: string; style: string }, fallbackSt
     attempts.push({ family: font.family, style: 'Regular' });
     if (font.family !== 'Inter') attempts.push({ family: 'Inter', style: font.style });
     attempts.push({ family: 'Inter', style: 'Regular' });
-    const seen = new Set<string>([`${font.family} ${font.style}`]);
+    // Figma's bundled Inter (and many other families) name compound styles
+    // with a space ("Semi Bold", "Extra Light") while CSS-facing tooling uses
+    // the camel form ("SemiBold") — try both spellings for every candidate.
+    const spaced = (s: string) => s.replace(/([a-z])([A-Z])/g, '$1 $2');
+    const withSpellings: Array<{ family: string; style: string }> = [];
     for (const f of attempts) {
+      withSpellings.push(f);
+      const alt = spaced(f.style);
+      if (alt !== f.style) withSpellings.push({ family: f.family, style: alt });
+    }
+    const seen = new Set<string>([`${font.family} ${font.style}`]);
+    for (const f of withSpellings) {
       const key = `${f.family} ${f.style}`;
       if (seen.has(key)) continue;
       seen.add(key);
