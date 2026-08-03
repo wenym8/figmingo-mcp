@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>figmingo-mcp 安装与使用指南</title>
+  <style>
+    :root {
+      --bg: #f6f7fa;
+      --fg: #1f1f28;
+      --muted: #5a5a6e;
+      --accent: #6e56cf;
+      --accent2: #0d9e6e;
+      --code-bg: #1e1e2e;
+      --code-fg: #e8e8f0;
+      --border: #e1e2e9;
+      --warn: #b7791f;
+      --danger: #c93636;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.7;
+      color: var(--fg);
+      background: var(--bg);
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 48px 20px 80px;
+    }
+    h1 { font-size: 2.2rem; margin-bottom: .4em; }
+    h2 { font-size: 1.5rem; margin-top: 2.2em; border-bottom: 2px solid var(--border); padding-bottom: .3em; }
+    h3 { font-size: 1.15rem; margin-top: 1.8em; color: var(--fg); }
+    p, li { color: var(--fg); }
+    ul, ol { padding-left: 1.4em; }
+    li { margin: .4em 0; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+      background: rgba(110,86,207,.12);
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: .9em;
+    }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      padding: 16px;
+      border-radius: 10px;
+      overflow-x: auto;
+      font-size: .9rem;
+      line-height: 1.5;
+    }
+    pre code { background: transparent; color: inherit; padding: 0; }
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin: 16px 0;
+      box-shadow: 0 2px 6px rgba(0,0,0,.04);
+    }
+    .badge {
+      display: inline-block;
+      font-size: .78rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+    .badge.read { background: #e9f3ff; color: #0b5fff; }
+    .badge.write { background: #e6f9f1; color: var(--accent2); }
+    .badge.replica { background: #fff3e0; color: var(--warn); }
+    details {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin: 10px 0;
+      padding: 12px 16px;
+    }
+    summary { cursor: pointer; font-weight: 600; }
+    details[open] summary { margin-bottom: 10px; }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+    }
+    .tip {
+      border-left: 4px solid var(--accent2);
+      background: #f0fdfa;
+      padding: 12px 16px;
+      border-radius: 0 10px 10px 0;
+      margin: 14px 0;
+    }
+    .warn {
+      border-left: 4px solid var(--warn);
+      background: #fff8eb;
+      padding: 12px 16px;
+      border-radius: 0 10px 10px 0;
+      margin: 14px 0;
+    }
+    .danger {
+      border-left: 4px solid var(--danger);
+      background: #fff1f1;
+      padding: 12px 16px;
+      border-radius: 0 10px 10px 0;
+      margin: 14px 0;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      background: rgba(246,247,250,.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 0;
+      z-index: 10;
+    }
+    nav .container { padding: 0 20px; }
+    nav a { margin-right: 14px; font-size: .9rem; white-space: nowrap; }
+    .step {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      margin: 18px 0;
+    }
+    .step-num {
+      flex: 0 0 32px;
+      height: 32px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: .95rem;
+    }
+    .step-body { flex: 1; }
+    .step-body p:first-child { margin-top: 0; }
+    kbd {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: .85em;
+      box-shadow: 0 1px 0 rgba(0,0,0,.05);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 14px 0;
+    }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; }
+    th { background: #f2f3f8; font-weight: 600; }
+    tr:last-child td { border-bottom: none; }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: .9rem;
+      margin-top: 60px;
+    }
+  </style>
+</head>
+<body>
+<nav>
+  <div class="container">
+    <a href="#quickstart">快速开始</a>
+    <a href="#token">Token</a>
+    <a href="#clients">客户端</a>
+    <a href="#plugin">插件</a>
+    <a href="#start">启动</a>
+    <a href="#usage">使用</a>
+    <a href="#replica">复刻流程</a>
+    <a href="#trouble">排错</a>
+  </div>
+</nav>
+
+<div class="container">
+  <h1>figmingo-mcp 安装与使用指南</h1>
+  <p>
+    本指南面向新用户，覆盖从安装、配置、插件导入到第一次调用工具的完整路径。
+    看完这页，你应该能在任意支持 MCP 的 AI 客户端里读取 Figma 文件，并把 HTML 1:1 复刻进 Figma 画布。
+  </p>
+
+  <h2 id="quickstart">一、快速开始（推荐）</h2>
+  <p>需要 <strong>Node.js ≥ 18</strong>。没装请先去 <a href="https://nodejs.org" target="_blank">nodejs.org</a> 安装 LTS 版。</p>
+
+  <div class="card">
+    <h3>macOS / Linux · 一键安装</h3>
+    <pre><code>curl -fsSL https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.sh | bash</code></pre>
+    <p>安装器会：检测 Node、全局安装 <code>figmingo-mcp</code>、下载 Playwright Chromium（约 170MB，一次性）、给常见 AI 客户端写入 MCP 配置、把伴侣插件复制到 <code>~/.figmingo/plugin</code>，并在桌面创建 <code>figmingo-plugin</code> 快捷方式。</p>
+
+    <h3>Windows · 一键安装</h3>
+    <pre><code>iwr -useb https://raw.githubusercontent.com/wenym8/figmingo-mcp/main/scripts/install.ps1 | iex</code></pre>
+  </div>
+
+  <div class="tip">
+    安装器是<strong>幂等</strong>的：重复运行不会覆盖已有的 Figma Token，也不会删除已有配置。
+  </div>
+
+  <h2 id="token">二、获取 Figma Personal Access Token</h2>
+  <ol>
+    <li>打开 <a href="https://figma.com" target="_blank">Figma</a> 并登录。</li>
+    <li>点击头像 → <strong>Settings</strong> → <strong>Security</strong> → <strong>Personal access tokens</strong>。</li>
+    <li>点击 <strong>Generate new token</strong>，给一个名字（例如 <code>figmingo-mcp</code>）。</li>
+    <li>勾选 <strong>File content</strong> 与 <strong>File metadata</strong> 读权限（Dev resources 可选）。</li>
+    <li>复制生成的 <code>figd_...</code> 字符串。</li>
+  </ol>
+  <div class="warn">
+    这条 Token 只保存在你本地配置里，不会上传到任何中转服务器。
+  </div>
+
+  <h2 id="clients">三、客户端配置</h2>
+  <p>安装器已自动写好配置。如果跳过了，或想手动添加，参考下面：</p>
+
+  <details>
+    <summary>通用 JSON 配置（Cursor / VS Code / Claude Code / Kimi CLI）</summary>
+    <pre><code>{
+  "mcpServers": {
+    "figmingo": {
+      "command": "npx",
+      "args": ["-y", "figmingo-mcp"],
+      "env": { "FIGMA_API_KEY": "figd_你的Token" }
+    }
+  }
+}</code></pre>
+    <p>把这个 JSON 合并进对应文件：</p>
+    <ul>
+      <li>Cursor：<code>~/.cursor/mcp.json</code></li>
+      <li>Claude Code：<code>~/.claude.json</code></li>
+      <li>Claude Desktop：macOS <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>；Linux <code>~/.config/Claude/claude_desktop_config.json</code>；Windows <code>%APPDATA%\Claude\claude_desktop_config.json</code></li>
+      <li>VS Code：macOS <code>~/Library/Application Support/Code/User/mcp.json</code>；Linux <code>~/.config/Code/User/mcp.json</code>；Windows <code>%APPDATA%\Code\User\mcp.json</code></li>
+      <li>Kimi CLI：<code>~/.kimi-code/mcp.json</code>（旧版也读 <code>~/.kimi/mcp.json</code>）</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>Codex CLI · TOML 配置</summary>
+    <pre><code>[mcp_servers.figmingo]
+command = "npx"
+args = ["-y", "figmingo-mcp"]
+
+[mcp_servers.figmingo.env]
+FIGMA_API_KEY = "figd_你的Token"</code></pre>
+    <p>写入 <code>~/.codex/config.toml</code>。安装器首次修改时会自动备份原文件到 <code>config.toml.figmingo-bak</code>。</p>
+  </details>
+
+  <div class="tip">
+    如果你用 fnm / nvm / Homebrew 装的 Node，安装器会自动把配置写成“绝对 node 路径 + 脚本路径”的形式，避免 GUI 客户端因为 <code>PATH</code> 太干净而找不到 node。
+  </div>
+
+  <h2 id="plugin">四、安装 Figma 伴侣插件（写回画布必须）</h2>
+  <p>读取工具直接走 REST API，但<strong>写入画布</strong>需要伴侣插件做本地桥接。</p>
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <p>打开 <strong>Figma 桌面端</strong>（桌面版才能跑开发插件，浏览器版不支持）。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <p>点击菜单 <strong>Plugins → Development → Import plugin from manifest…</strong>。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <p>在文件选择器里选中<strong>桌面上的 <code>figmingo-plugin</code></strong> 文件夹，再选里面的 <code>manifest.json</code>。</p>
+      <p>如果没看到桌面快捷方式，也可以按 <kbd>⌘</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> 直接粘贴路径：</p>
+      <pre><code>~/.figmingo/plugin/manifest.json</code></pre>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <p>导入一次后，每次需要写画布时，从 <strong>Plugins → Development → figmingo</strong> 启动插件。</p>
+      <p>插件 UI 会显示一个状态面板：● 已连接 / ○ 连接中 / ✕ 失败原因。保持插件窗口运行即可。</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>插件文件位置</h3>
+    <ul>
+      <li>本体：<code>~/.figmingo/plugin/manifest.json</code></li>
+      <li>桌面快捷方式：<code>~/Desktop/figmingo-plugin</code>（Windows 为 <code>%USERPROFILE%\Desktop\figmingo-plugin</code>）</li>
+    </ul>
+  </div>
+
+  <h2 id="start">五、启动与环境自检</h2>
+  <p>AI 客户端一般通过 stdio 自动拉起 MCP 服务器；你通常不需要手动启动它。但如果想验证安装是否完整，运行：</p>
+  <pre><code>figmingo-mcp doctor</code></pre>
+  <p>它会逐项检查 Node、Token 有效性、Chromium、插件文件版本、客户端配置、桥端口，全部通过时退出码为 <code>0</code>。</p>
+
+  <p>想手动启动服务器（例如测 HTTP 模式）：</p>
+  <pre><code># stdio 模式（AI 客户端默认）
+figmingo-mcp
+
+# Streamable HTTP 模式
+figmingo-mcp --http --port 3845
+
+# 其他常用命令
+figmingo-mcp cache-clear
+figmingo-mcp --help</code></pre>
+
+  <p>常用启动参数：</p>
+  <table>
+    <tr><th>参数</th><th>说明</th></tr>
+    <tr><td><code>--token &lt;pat&gt;</code></td><td>临时指定 Figma Token</td></tr>
+    <tr><td><code>--http</code></td><td>启用 Streamable HTTP</td></tr>
+    <tr><td><code>--port &lt;n&gt;</code></td><td>HTTP 端口（默认随机）</td></tr>
+    <tr><td><code>--bridge-port &lt;n&gt;</code></td><td>插件桥端口（默认 39220）</td></tr>
+    <tr><td><code>--no-bridge</code></td><td>禁用写桥</td></tr>
+    <tr><td><code>--cache-ttl &lt;min&gt;</code></td><td>缓存时间（分钟）</td></tr>
+    <tr><td><code>--no-cache</code></td><td>禁用磁盘缓存</td></tr>
+  </table>
+
+  <h2 id="usage">六、基础使用示例</h2>
+  <p>配置完成后，<strong>重启你的 AI 客户端</strong>，然后在对话里直接要求调用工具。下面是常用工具的示例：</p>
+
+  <div class="card">
+    <h3><code>whoami</code> <span class="badge read">read</span></h3>
+    <p>验证 Token 是否有效，查看限流余量和缓存状态。</p>
+    <pre><code>请调用 whoami 检查 figmingo-mcp 是否连上。</code></pre>
+  </div>
+
+  <div class="card">
+    <h3><code>get_design_context</code> <span class="badge read">read</span></h3>
+    <p>获取简化版节点树：绝对坐标、auto-layout、填充/描边/效果、文字样式。</p>
+    <pre><code>读取 Figma 文件 https://www.figma.com/file/XXXX/YYY?node-id=1%3A2 的设计上下文。</code></pre>
+  </div>
+
+  <div class="card">
+    <h3><code>get_screenshot</code> <span class="badge read">read</span></h3>
+    <p>把某个 Figma 节点导出为 PNG/JPG/SVG/PDF。</p>
+    <pre><code>导出 https://www.figma.com/file/XXXX/YYY?node-id=1%3A2 为 PNG，scale 用 2。</code></pre>
+  </div>
+
+  <div class="card">
+    <h3><code>download_assets</code> <span class="badge read">read</span></h3>
+    <p>批量导出节点 + 原始图片填充，生成资产清单。</p>
+    <pre><code>下载这个 Figma 文件里的所有图标和图片到 ./assets。</code></pre>
+  </div>
+
+  <div class="card">
+    <h3><code>get_html_replica_spec</code> <span class="badge replica">replica</span></h3>
+    <p>为 HTML 复刻生成一份优化过的 spec：绝对矩形、计算排版、颜色、渐变、资产清单。</p>
+    <pre><code>从这个 Figma 节点生成复刻 spec，保存到 ./spec.json。</code></pre>
+  </div>
+
+  <div class="card">
+    <h3><code>import_html_replica</code> <span class="badge write">write</span></h3>
+    <p>把 HTML 文件或 URL 一键导入 Figma 画布（需要伴侣插件已连接）。</p>
+    <pre><code>把 ./cart-final.html 一比一复刻进当前 Figma 文件。</code></pre>
+  </div>
+
+  <h2 id="replica">七、HTML 1:1 复刻标准流程</h2>
+  <p>figmingo-mcp 的核心闭环：从 Figma（或任意参考图）拿到 spec → 生成 HTML/CSS → 验收 → 导入 Figma。</p>
+
+  <ol>
+    <li><strong>提取设计 spec</strong>：用 <code>get_html_replica_spec</code> 拿到绝对坐标、字体、颜色、资产清单。</li>
+    <li><strong>写 HTML/CSS</strong>：按 spec 还原页面。复刻经验详见 <a href="REPLICA-PLAYBOOK.md">docs/REPLICA-PLAYBOOK.md</a>。</li>
+    <li><strong>渲染截图</strong>：用 <code>render_html_screenshot</code> 在 Chromium 里截图。</li>
+    <li><strong>验收</strong>：用 <code>verify_html_parity</code> 或 <code>compare_html_to_image</code> 跑三关验收（内容、结构 ±4px、视觉像素 diff ≤ 1%）。</li>
+    <li><strong>导入 Figma</strong>：用 <code>import_html_replica</code> 把 HTML 写回画布。</li>
+    <li><strong>微调</strong>：如未通过，看 diff 图的 band 定位，改 HTML 后再跑。</li>
+  </ol>
+
+  <div class="tip">
+    复刻时先把字体锁定。Figma 没有某些商业字体（如 Roobert）时，会降级为 Inter，字形宽度差异会拉高像素 diff。
+  </div>
+
+  <h2 id="trouble">八、常见问题与排错</h2>
+
+  <details>
+    <summary>AI 客户端里没有出现 figmingo 工具</summary>
+    <ul>
+      <li>确认客户端配置文件中 <code>mcpServers.figmingo</code> 已写入。</li>
+      <li>重启 AI 客户端。</li>
+      <li>查看客户端日志，确认 <code>npx -y figmingo-mcp</code> 能被正常拉起。</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>插件一直显示“connecting…”</summary>
+    <ul>
+      <li>确认 MCP 服务器已启动（AI 客户端会自己拉）。</li>
+      <li>确认 Figma 是<strong>桌面端</strong>，不是浏览器版。</li>
+      <li>检查 39220 端口是否被占用：<code>lsof -i :39220</code>（macOS/Linux）或 <code>netstat -ano | findstr 39220</code>（Windows）。</li>
+      <li>运行 <code>figmingo-mcp doctor</code> 查看桥状态。</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>调用 get_html_replica_spec / import_html_replica 报错 Chromium 未安装</summary>
+    <pre><code>npx playwright install chromium</code></pre>
+    <p>然后重跑。</p>
+  </details>
+
+  <details>
+    <summary>verify_html_parity 视觉 diff 失败</summary>
+    <ul>
+      <li>先看 diff 图，定位是具体哪个 band。</li>
+      <li>字体不同是常见根因；在 Figma 里安装原稿字体后再导入可消除。</li>
+      <li>第三方 JS widget（如 affirm、PayPal）的 DOM 结构畸形时，提取器可能拿不到真实排版，需要手动 patch HTML。</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>如何更新 / 卸载</summary>
+    <pre><code># 更新
+npm install -g figmingo-mcp@latest
+
+# 更新后重新复制插件
+figmingo-mcp doctor
+
+# 卸载
+npm uninstall -g figmingo-mcp
+rm -rf ~/.figmingo</code></pre>
+    <p>卸载后也可以顺手删除桌面上的 <code>figmingo-plugin</code> 快捷方式。</p>
+  </details>
+
+  <h2>九、写在最后</h2>
+  <p>
+    figmingo-mcp 是本地优先方案：除调用 <code>api.figma.com</code> 外，所有数据、插件连接、Chromium 渲染都在你自己的机器上完成。
+    免费 Figma 套餐即可使用全部读取与写入能力，没有 Dev 席位或月度调用上限。
+  </p>
+  <p>
+    更深入的架构说明、工具契约与验收方案见 <a href="../ARCHITECTURE.md">ARCHITECTURE.md</a>；复刻实战心法见 <a href="REPLICA-PLAYBOOK.md">docs/REPLICA-PLAYBOOK.md</a>。
+  </p>
+
+  <footer>
+    文档版本：figmingo-mcp 0.1.13 · 仓库：<a href="https://github.com/wenym8/figmingo-mcp" target="_blank">github.com/wenym8/figmingo-mcp</a>
+  </footer>
+</div>
+</body>
+</html>
