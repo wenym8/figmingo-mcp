@@ -186,6 +186,28 @@ interface RunCtx {
   beat?: () => void;
 }
 
+function absolutePosition(node: any) {
+  if ('absoluteTransform' in node) {
+    return { x: node.absoluteTransform[0][2], y: node.absoluteTransform[1][2] };
+  }
+  return { x: node.x ?? 0, y: node.y ?? 0 };
+}
+
+function moveToParent(node: any, parent: any, index: number | undefined, preservePosition: boolean) {
+  if (node === parent) throw new Error('set_parent: node cannot be moved into itself');
+  for (let current = parent; current; current = current.parent) {
+    if (current === node) throw new Error('set_parent: cannot move a node into its descendant');
+  }
+  const position = absolutePosition(node);
+  if (index === undefined) parent.appendChild(node);
+  else parent.insertChild(index, node);
+  if (preservePosition) {
+    const parentPosition = absolutePosition(parent);
+    node.x = position.x - parentPosition.x;
+    node.y = position.y - parentPosition.y;
+  }
+}
+
 // ---- command handlers ----
 
 const handlers: Record<string, (params: any, vars: Map<string, string>, ctx?: RunCtx) => Promise<any>> = {
@@ -464,6 +486,61 @@ const handlers: Record<string, (params: any, vars: Map<string, string>, ctx?: Ru
     const h = params.height ?? (node as any).height ?? 100;
     (node as any).resize(Math.max(1, w), Math.max(1, h));
     return { nodeId: (node as any).id };
+  },
+
+  async group_nodes(params) {
+    if (!Array.isArray(params.nodeIds) || params.nodeIds.length === 0) {
+      throw new Error('group_nodes: nodeIds must be a non-empty array');
+    }
+    const nodes = params.nodeIds.map((id: string) => findNode(id));
+    const parent = nodes[0].parent;
+    if (!parent || !('children' in parent)) throw new Error('group_nodes: nodes cannot be grouped here');
+    if (nodes.some((node: BaseNode) => node.parent !== parent)) {
+      throw new Error('group_nodes: all nodes must have the same parent');
+    }
+    const group = figma.group(nodes, parent, params.index);
+    if (params.name !== undefined) group.name = String(params.name);
+    figma.currentPage.selection = [group];
+    return { nodeId: group.id, name: group.name, childIds: nodes.map((node: BaseNode) => node.id) };
+  },
+
+  async ungroup(params) {
+    const node = findNode(params.nodeId) as SceneNode & ChildrenMixin;
+    if (!node.parent) throw new Error('ungroup: node has no parent');
+    const parent = node.parent;
+    const children = figma.ungroup(node);
+    figma.currentPage.selection = children;
+    return { parentId: parent.id, childIds: children.map((child) => child.id) };
+  },
+
+  async set_parent(params, vars) {
+    if (!params.parentId) throw new Error('set_parent: parentId is required');
+    const node = findNode(params.nodeId) as SceneNode;
+    const parent = parentOf(params, vars);
+    moveToParent(node, parent, params.index, params.preservePosition !== false);
+    return { nodeId: node.id, parentId: parent.id, x: node.x, y: node.y };
+  },
+
+  async duplicate_node(params, vars) {
+    const node = findNode(params.nodeId) as SceneNode;
+    const clone = node.clone();
+    const parent = params.parentId ? parentOf(params, vars) : clone.parent;
+    if (!parent) throw new Error('duplicate_node: cloned node has no parent');
+    moveToParent(clone, parent, params.index, params.preservePosition !== false);
+    if (params.name !== undefined) clone.name = String(params.name);
+    if (params.offsetX !== undefined) clone.x += Number(params.offsetX);
+    if (params.offsetY !== undefined) clone.y += Number(params.offsetY);
+    figma.currentPage.selection = [clone];
+    return { nodeId: clone.id, parentId: parent.id, name: clone.name, x: clone.x, y: clone.y };
+  },
+
+  async rename_node(params) {
+    if (typeof params.name !== 'string' || params.name.trim().length === 0) {
+      throw new Error('rename_node: name must be a non-empty string');
+    }
+    const node = findNode(params.nodeId);
+    node.name = params.name;
+    return { nodeId: node.id, name: node.name };
   },
 
   async delete_node(params) {

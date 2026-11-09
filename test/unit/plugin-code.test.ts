@@ -22,6 +22,13 @@ const removed: string[] = [];
 let onMessage: ((msg: any) => Promise<void>) | undefined;
 let nodeSeq = 0;
 
+function attachChild(parent: any, child: any, index?: number) {
+  if (child.parent) child.parent.children = child.parent.children.filter((node: any) => node !== child);
+  child.parent = parent;
+  if (index === undefined) parent.children.push(child);
+  else parent.children.splice(index, 0, child);
+}
+
 function makeNode(type: string) {
   const node: any = {
     id: `${type}:${++nodeSeq}`,
@@ -33,8 +40,31 @@ function makeNode(type: string) {
     height: 0,
     rotation: 0,
     children: [],
+    get absoluteTransform() {
+      let x = 0;
+      let y = 0;
+      for (let current = this; current; current = current.parent) {
+        x += current.x ?? 0;
+        y += current.y ?? 0;
+      }
+      return [[1, 0, x], [0, 1, y]];
+    },
     appendChild(child: any) {
-      this.children.push(child);
+      attachChild(this, child);
+    },
+    insertChild(index: number, child: any) {
+      attachChild(this, child, index);
+    },
+    clone() {
+      const copy = makeNode(this.type);
+      copy.name = this.name;
+      copy.x = this.x;
+      copy.y = this.y;
+      copy.width = this.width;
+      copy.height = this.height;
+      copy.rotation = this.rotation;
+      if (this.parent) attachChild(this.parent, copy);
+      return copy;
     },
     resize(w: number, h: number) {
       this.width = w;
@@ -99,7 +129,10 @@ beforeAll(async () => {
       selection: [],
       children: [] as any[],
       appendChild(child: any) {
-        this.children.push(child);
+        attachChild(this, child);
+      },
+      insertChild(index: number, child: any) {
+        attachChild(this, child, index);
       },
       findOne(fn: (n: any) => boolean) {
         return findDeep(this.children, fn);
@@ -118,6 +151,25 @@ beforeAll(async () => {
     createFrame: () => makeNode('FRAME'),
     createRectangle: () => makeNode('RECTANGLE'),
     createText: () => makeNode('TEXT'),
+    group: (nodes: any[], parent: any, index?: number) => {
+      const group = makeNode('GROUP');
+      const grouped = new Set(nodes);
+      parent.children = parent.children.filter((node: any) => !grouped.has(node));
+      group.children = [...nodes];
+      group.parent = parent;
+      for (const node of nodes) node.parent = group;
+      if (index === undefined) parent.children.push(group);
+      else parent.children.splice(index, 0, group);
+      return group;
+    },
+    ungroup: (node: any) => {
+      const parent = node.parent;
+      const index = parent.children.indexOf(node);
+      parent.children = parent.children.filter((child: any) => child !== node);
+      for (const child of node.children) child.parent = parent;
+      parent.children.splice(index, 0, ...node.children);
+      return node.children;
+    },
     createImage: () => {
       createImageCalls++;
       return { hash: 'hash-abc123' };
@@ -731,5 +783,179 @@ describe('metric compensation (fallback-font width drift)', () => {
     } finally {
       figma.__autoSizeTexts = false;
     }
+  });
+});
+
+
+describe('plugin code.ts — node organization commands', () => {
+  it('group_nodes groups nodes, names the group, and selects it', async () => {
+    const figma = (globalThis as any).figma;
+    const parent = makeNode('FRAME');
+    const ellipse = makeNode('ELLIPSE');
+    const rectangle = makeNode('RECTANGLE');
+    ellipse.parent = parent;
+    rectangle.parent = parent;
+    parent.children = [ellipse, rectangle];
+    figma.currentPage.appendChild(parent);
+
+    const msgs = await runCommand('g1', 'group_nodes', {
+      nodeIds: [ellipse.id, rectangle.id],
+      name: 'button_stop',
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+
+    expect(result?.ok).toBe(true);
+    expect(result?.result.name).toBe('button_stop');
+    expect(result?.result.childIds).toEqual([ellipse.id, rectangle.id]);
+    expect(parent.children).toHaveLength(1);
+    expect(parent.children[0].type).toBe('GROUP');
+    expect(parent.children[0].children).toEqual([ellipse, rectangle]);
+    expect(ellipse.parent).toBe(parent.children[0]);
+    expect(rectangle.parent).toBe(parent.children[0]);
+    expect(figma.currentPage.selection).toEqual([parent.children[0]]);
+  });
+
+  it('rename_node updates and returns the node name', async () => {
+    const figma = (globalThis as any).figma;
+    const node = makeNode('RECTANGLE');
+    figma.currentPage.appendChild(node);
+
+    const msgs = await runCommand('g2', 'rename_node', { nodeId: node.id, name: 'button_stop' });
+    const result = msgs.find((m) => m.type === 'command-result');
+
+    expect(result?.ok).toBe(true);
+    expect(result?.result).toEqual({ nodeId: node.id, name: 'button_stop' });
+    expect(node.name).toBe('button_stop');
+  });
+
+  it('group_nodes rejects nodes with different parents without changing them', async () => {
+    const figma = (globalThis as any).figma;
+    const firstParent = makeNode('FRAME');
+    const secondParent = makeNode('FRAME');
+    const first = makeNode('ELLIPSE');
+    const second = makeNode('RECTANGLE');
+    first.parent = firstParent;
+    second.parent = secondParent;
+    firstParent.children = [first];
+    secondParent.children = [second];
+    figma.currentPage.appendChild(firstParent);
+    figma.currentPage.appendChild(secondParent);
+
+    const msgs = await runCommand('g3', 'group_nodes', { nodeIds: [first.id, second.id] });
+    const result = msgs.find((m) => m.type === 'command-result');
+
+    expect(result?.ok).toBe(false);
+    expect(result?.error).toMatch(/same parent/);
+    expect(firstParent.children).toEqual([first]);
+    expect(secondParent.children).toEqual([second]);
+  });
+
+  it('group_nodes and rename_node validate required parameters', async () => {
+    const grouped = await runCommand('g4', 'group_nodes', { nodeIds: [] });
+    expect(grouped.find((m) => m.type === 'command-result')?.error).toMatch(/non-empty array/);
+
+    const node = makeNode('RECTANGLE');
+    (globalThis as any).figma.currentPage.appendChild(node);
+    const renamed = await runCommand('g5', 'rename_node', { nodeId: node.id, name: '  ' });
+    expect(renamed.find((m) => m.type === 'command-result')?.error).toMatch(/non-empty string/);
+  });
+});
+
+
+describe('plugin code.ts — hierarchy editing commands', () => {
+  it('ungroup moves children to the parent and returns their ids', async () => {
+    const figma = (globalThis as any).figma;
+    const parent = makeNode('FRAME');
+    const group = makeNode('GROUP');
+    const ellipse = makeNode('ELLIPSE');
+    const rectangle = makeNode('RECTANGLE');
+    attachChild(parent, group);
+    attachChild(group, ellipse);
+    attachChild(group, rectangle);
+    figma.currentPage.appendChild(parent);
+
+    const msgs = await runCommand('h1', 'ungroup', { nodeId: group.id });
+    const result = msgs.find((m) => m.type === 'command-result');
+
+    expect(result?.ok).toBe(true);
+    expect(result?.result).toEqual({ parentId: parent.id, childIds: [ellipse.id, rectangle.id] });
+    expect(parent.children).toEqual([ellipse, rectangle]);
+    expect(ellipse.parent).toBe(parent);
+    expect(rectangle.parent).toBe(parent);
+    expect(figma.currentPage.selection).toEqual([ellipse, rectangle]);
+  });
+
+  it('set_parent preserves absolute position by default', async () => {
+    const figma = (globalThis as any).figma;
+    const oldParent = makeNode('FRAME');
+    const newParent = makeNode('FRAME');
+    const node = makeNode('RECTANGLE');
+    oldParent.x = 10;
+    oldParent.y = 20;
+    newParent.x = 100;
+    newParent.y = 200;
+    node.x = 5;
+    node.y = 7;
+    attachChild(oldParent, node);
+    figma.currentPage.appendChild(oldParent);
+    figma.currentPage.appendChild(newParent);
+
+    const msgs = await runCommand('h2', 'set_parent', { nodeId: node.id, parentId: newParent.id });
+    const result = msgs.find((m) => m.type === 'command-result');
+
+    expect(result?.ok).toBe(true);
+    expect(result?.result).toEqual({ nodeId: node.id, parentId: newParent.id, x: -85, y: -173 });
+    expect(oldParent.children).toEqual([]);
+    expect(newParent.children).toEqual([node]);
+    expect(node.parent).toBe(newParent);
+  });
+
+  it('set_parent rejects moving a node into its descendant', async () => {
+    const figma = (globalThis as any).figma;
+    const ancestor = makeNode('FRAME');
+    const descendant = makeNode('FRAME');
+    attachChild(ancestor, descendant);
+    figma.currentPage.appendChild(ancestor);
+
+    const msgs = await runCommand('h3', 'set_parent', { nodeId: ancestor.id, parentId: descendant.id });
+    const result = msgs.find((m) => m.type === 'command-result');
+
+    expect(result?.ok).toBe(false);
+    expect(result?.error).toMatch(/descendant/);
+    expect(descendant.parent).toBe(ancestor);
+    expect(ancestor.children).toEqual([descendant]);
+  });
+
+  it('duplicate_node clones, renames, reparents, offsets, and selects the copy', async () => {
+    const figma = (globalThis as any).figma;
+    const oldParent = makeNode('FRAME');
+    const newParent = makeNode('FRAME');
+    const original = makeNode('RECTANGLE');
+    oldParent.x = 10;
+    oldParent.y = 20;
+    newParent.x = 100;
+    newParent.y = 200;
+    original.x = 5;
+    original.y = 7;
+    original.name = 'original';
+    attachChild(oldParent, original);
+    figma.currentPage.appendChild(oldParent);
+    figma.currentPage.appendChild(newParent);
+
+    const msgs = await runCommand('h4', 'duplicate_node', {
+      nodeId: original.id,
+      parentId: newParent.id,
+      name: 'copy',
+      offsetX: 3,
+      offsetY: 4,
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+    const copy = newParent.children[0];
+
+    expect(result?.ok).toBe(true);
+    expect(result?.result).toEqual({ nodeId: copy.id, parentId: newParent.id, name: 'copy', x: -82, y: -169 });
+    expect(copy).not.toBe(original);
+    expect(oldParent.children).toEqual([original]);
+    expect(figma.currentPage.selection).toEqual([copy]);
   });
 });
