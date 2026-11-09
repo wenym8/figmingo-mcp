@@ -71,6 +71,9 @@ export const PLUGIN_COMMANDS = [
   'move_node',
   'resize_node',
   'group_nodes',
+  'ungroup',
+  'set_parent',
+  'duplicate_node',
   'rename_node',
   'delete_node',
   'get_selection',
@@ -101,6 +104,11 @@ export type PluginCommandName = (typeof PLUGIN_COMMANDS)[number];
  *   and returns a `warning` when Figma silently kept the previous value.
  * - group_nodes: nodeIds (non-empty array of nodes with the same parent),
  *   optional name and index. Returns the new group nodeId and selects the group.
+ * - ungroup: nodeId. Moves children to the group's parent and returns childIds.
+ * - set_parent: nodeId + parentId, optional index and preservePosition (default
+ *   true). Preserves absolute position and rejects parenting into descendants.
+ * - duplicate_node: nodeId, optional parentId, name, index, offsetX, offsetY and
+ *   preservePosition (default true). Returns the clone's nodeId and parentId.
  * - rename_node: nodeId + non-empty name. Returns the updated name.
  * - export_node: nodeId, format (PNG|JPG|SVG|PDF), scale. Returns base64 by
  *   default; pass an absolute `outPath` to have the SERVER write the bytes to
