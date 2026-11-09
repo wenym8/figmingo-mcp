@@ -1003,6 +1003,10 @@ describe('plugin code.ts — rotate_node', () => {
   it('rotates a node by degrees and validates the angle', async () => {
     const figma = (globalThis as any).figma;
     const node = makeNode('GROUP');
+    node.x = 10;
+    node.y = 20;
+    node.width = 30;
+    node.height = 30;
     figma.currentPage.appendChild(node);
 
     const msgs = await runCommand('rot1', 'rotate_node', { nodeId: node.id, rotation: 180 });
@@ -1010,7 +1014,9 @@ describe('plugin code.ts — rotate_node', () => {
 
     expect(result?.ok).toBe(true);
     expect(result?.result).toEqual({ nodeId: node.id, rotation: 180 });
-    expect(node.rotation).toBeCloseTo(Math.PI, 6);
+    expect(node.relativeTransform[0][0]).toBeCloseTo(-1, 6);
+    expect(node.relativeTransform[0][2]).toBeCloseTo(50, 6);
+    expect(node.relativeTransform[1][2]).toBeCloseTo(70, 6);
 
     const invalid = await runCommand('rot2', 'rotate_node', { nodeId: node.id });
     expect(invalid.find((m) => m.type === 'command-result')?.error).toMatch(/finite number/);

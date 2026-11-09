@@ -524,7 +524,17 @@ const handlers = {
             throw new Error('rotate_node: rotation must be a finite number in degrees');
         }
         const node = findNode(params.nodeId);
-        applyRotation(node, params.rotation);
+        const angle = (params.rotation * Math.PI) / 180;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const centerX = node.x + node.width / 2;
+        const centerY = node.y + node.height / 2;
+        const tx = centerX - cos * centerX + sin * centerY;
+        const ty = centerY - sin * centerX - cos * centerY;
+        node.relativeTransform = [
+            [cos, -sin, tx],
+            [sin, cos, ty],
+        ];
         return { nodeId: node.id, rotation: params.rotation };
     },
     async group_nodes(params) {

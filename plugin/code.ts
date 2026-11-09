@@ -498,7 +498,17 @@ const handlers: Record<string, (params: any, vars: Map<string, string>, ctx?: Ru
       throw new Error('rotate_node: rotation must be a finite number in degrees');
     }
     const node = findNode(params.nodeId) as SceneNode & LayoutMixin;
-    applyRotation(node, params.rotation);
+    const angle = (params.rotation * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const centerX = node.x + node.width / 2;
+    const centerY = node.y + node.height / 2;
+    const tx = centerX - cos * centerX + sin * centerY;
+    const ty = centerY - sin * centerX - cos * centerY;
+    (node as any).relativeTransform = [
+      [cos, -sin, tx],
+      [sin, cos, ty],
+    ];
     return { nodeId: node.id, rotation: params.rotation };
   },
 
