@@ -47,6 +47,7 @@ describe('replica + write tools', () => {
     expect(parsed.supportedCommands).toContain('ungroup');
     expect(parsed.supportedCommands).toContain('set_parent');
     expect(parsed.supportedCommands).toContain('duplicate_node');
+    expect(parsed.supportedCommands).toContain('rotate_node');
   });
 
   it('execute_plugin_command queues/fails cleanly without a plugin', async () => {

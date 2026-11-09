@@ -181,7 +181,7 @@ Everything brand-specific is parameterized via options:
 | Tool | What it does |
 |---|---|
 | `bridge_status` | Plugin connected? queue size, client info, supported commands. |
-| `execute_plugin_command` | Generic envelope: `create_frame`, `create_text`, `create_rectangle`, `set_fills`, `set_effects`, `set_auto_layout`, `insert_image`, `move_node`, `resize_node`, `group_nodes`, `ungroup`, `set_parent`, `duplicate_node`, `rename_node`, `delete_node`, `get_selection`, `get_file_info`, `get_page_children`, `export_node` — plus `commands: [...]` batches (sequential, `$var` node-id refs). Queued (bounded) while disconnected; heartbeat-based timeouts (see below). `create_frame`/`create_rectangle` accept `rotation` (degrees); `export_node` accepts `params.outPath` to save bytes to disk. |
+| `execute_plugin_command` | Generic envelope: `create_frame`, `create_text`, `create_rectangle`, `set_fills`, `set_effects`, `set_auto_layout`, `insert_image`, `move_node`, `resize_node`, `rotate_node`, `group_nodes`, `ungroup`, `set_parent`, `duplicate_node`, `rename_node`, `delete_node`, `get_selection`, `get_file_info`, `get_page_children`, `export_node` — plus `commands: [...]` batches (sequential, `$var` node-id refs). Queued (bounded) while disconnected; heartbeat-based timeouts (see below). `create_frame`/`create_rectangle` accept `rotation` (degrees); `export_node` accepts `params.outPath` to save bytes to disk. |
 | `import_html_replica` | High-level: rebuild a replica spec as native Figma frames — main frame → section frames → nested containers / text / image nodes. Give it an HTML file (`htmlPath`) or URL (`htmlUrl`) and it extracts layout + computed styles with headless Chromium first (border-radius, borders, shadows, gradients, webfonts, real image bytes), or pass a ready-made spec (`spec`/`specPath`). `x`/`y` set the main frame landing spot; `dryRun` previews the command plan; degradations (missing fonts, SVG assets, failed images) come back in `warnings`. |
 
 The companion plugin (`plugin/`) connects to the MCP server at
@@ -401,7 +401,7 @@ POS_TOL = 4        FONT_SIZE_TOL = 1      LS_TOL = 0.5
 LH_TOL  = 2        COLOR_TOL     = 2/255  VISUAL_MAX_RATIO = 0.01（裁切 ≤ 2px）
 ```
 
-**写入工具（伴侣插件桥）**：`bridge_status`（桥连接状态）· `execute_plugin_command`（19 种命令 + `commands: [...]` 批次，顺序执行，`$var` 节点引用，心跳超时机制）· `import_html_replica`（HTML 文件/URL 一键直导为原生 Figma frames，Chromium 提取布局与计算样式，`dryRun` 预览，降级进 `warnings`）。
+**写入工具（伴侣插件桥）**：`bridge_status`（桥连接状态）· `execute_plugin_command`（20 种命令 + `commands: [...]` 批次，顺序执行，`$var` 节点引用，心跳超时机制）· `import_html_replica`（HTML 文件/URL 一键直导为原生 Figma frames，Chromium 提取布局与计算样式，`dryRun` 预览，降级进 `warnings`）。
 
 插件连接 `ws://127.0.0.1:39220`。导入一次：**Figma 桌面端 → 插件 → 开发 → Import plugin from manifest…** → 选**桌面上的 `figmingo-plugin/manifest.json`**（安装器放的快捷方式；本体在 `~/.figmingo/plugin/manifest.json`），保持运行即可。免费套餐可用——写入不占用 REST 配额。
 

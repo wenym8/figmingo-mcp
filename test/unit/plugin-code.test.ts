@@ -997,3 +997,22 @@ describe('plugin code.ts — duplicate position regression', () => {
     expect(copy.y).toBe(603);
   });
 });
+
+
+describe('plugin code.ts — rotate_node', () => {
+  it('rotates a node by degrees and validates the angle', async () => {
+    const figma = (globalThis as any).figma;
+    const node = makeNode('GROUP');
+    figma.currentPage.appendChild(node);
+
+    const msgs = await runCommand('rot1', 'rotate_node', { nodeId: node.id, rotation: 180 });
+    const result = msgs.find((m) => m.type === 'command-result');
+
+    expect(result?.ok).toBe(true);
+    expect(result?.result).toEqual({ nodeId: node.id, rotation: 180 });
+    expect(node.rotation).toBeCloseTo(Math.PI, 6);
+
+    const invalid = await runCommand('rot2', 'rotate_node', { nodeId: node.id });
+    expect(invalid.find((m) => m.type === 'command-result')?.error).toMatch(/finite number/);
+  });
+});

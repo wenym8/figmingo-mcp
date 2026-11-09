@@ -519,6 +519,14 @@ const handlers = {
         node.resize(Math.max(1, w), Math.max(1, h));
         return { nodeId: node.id };
     },
+    async rotate_node(params) {
+        if (typeof params.rotation !== 'number' || !Number.isFinite(params.rotation)) {
+            throw new Error('rotate_node: rotation must be a finite number in degrees');
+        }
+        const node = findNode(params.nodeId);
+        applyRotation(node, params.rotation);
+        return { nodeId: node.id, rotation: params.rotation };
+    },
     async group_nodes(params) {
         if (!Array.isArray(params.nodeIds) || params.nodeIds.length === 0) {
             throw new Error('group_nodes: nodeIds must be a non-empty array');

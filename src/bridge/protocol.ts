@@ -70,6 +70,7 @@ export const PLUGIN_COMMANDS = [
   'insert_image',
   'move_node',
   'resize_node',
+  'rotate_node',
   'group_nodes',
   'ungroup',
   'set_parent',
@@ -102,6 +103,7 @@ export type PluginCommandName = (typeof PLUGIN_COMMANDS)[number];
  *   explicit error), scaleMode, cornerRadius, stroke params, opacity.
  * - set_fills / set_effects: nodeId + payload; set_fills reads the fills back
  *   and returns a `warning` when Figma silently kept the previous value.
+ * - rotate_node: nodeId + rotation in degrees. Returns the applied rotation.
  * - group_nodes: nodeIds (non-empty array of nodes with the same parent),
  *   optional name and index. Returns the new group nodeId and selects the group.
  * - ungroup: nodeId. Moves children to the group's parent and returns childIds.

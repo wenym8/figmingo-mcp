@@ -92,7 +92,7 @@ AI client (Cursor / Claude Code / …)
 | Tool | Purpose |
 |---|---|
 | `bridge_status` | Is the companion plugin connected? pending command queue size. |
-| `execute_plugin_command` | Generic command envelope to the plugin: `create_frame`, `create_text`, `create_rectangle`, `set_fills`, `set_auto_layout`, `insert_image`, `move_node`, `resize_node`, `group_nodes`, `ungroup`, `set_parent`, `duplicate_node`, `rename_node`, `delete_node`, `get_selection`, `export_node`. Batched commands supported. |
+| `execute_plugin_command` | Generic command envelope to the plugin: `create_frame`, `create_text`, `create_rectangle`, `set_fills`, `set_auto_layout`, `insert_image`, `move_node`, `resize_node`, `rotate_node`, `group_nodes`, `ungroup`, `set_parent`, `duplicate_node`, `rename_node`, `delete_node`, `get_selection`, `export_node`. Batched commands supported. |
 | `import_html_replica` | High-level: take a replica spec (from `get_html_replica_spec`) and rebuild it as native Figma frames via the bridge. |
 
 ## Figma REST API facts that shape the design
