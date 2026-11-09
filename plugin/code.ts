@@ -466,6 +466,31 @@ const handlers: Record<string, (params: any, vars: Map<string, string>, ctx?: Ru
     return { nodeId: (node as any).id };
   },
 
+  async group_nodes(params) {
+    if (!Array.isArray(params.nodeIds) || params.nodeIds.length === 0) {
+      throw new Error('group_nodes: nodeIds must be a non-empty array');
+    }
+    const nodes = params.nodeIds.map((id: string) => findNode(id));
+    const parent = nodes[0].parent;
+    if (!parent || !('children' in parent)) throw new Error('group_nodes: nodes cannot be grouped here');
+    if (nodes.some((node: BaseNode) => node.parent !== parent)) {
+      throw new Error('group_nodes: all nodes must have the same parent');
+    }
+    const group = figma.group(nodes, parent, params.index);
+    if (params.name !== undefined) group.name = String(params.name);
+    figma.currentPage.selection = [group];
+    return { nodeId: group.id, name: group.name, childIds: nodes.map((node: BaseNode) => node.id) };
+  },
+
+  async rename_node(params) {
+    if (typeof params.name !== 'string' || params.name.trim().length === 0) {
+      throw new Error('rename_node: name must be a non-empty string');
+    }
+    const node = findNode(params.nodeId);
+    node.name = params.name;
+    return { nodeId: node.id, name: node.name };
+  },
+
   async delete_node(params) {
     const node = findNode(params.nodeId) as SceneNode;
     node.remove();

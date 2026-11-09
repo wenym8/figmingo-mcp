@@ -42,6 +42,8 @@ describe('replica + write tools', () => {
     expect(parsed.connected).toBe(false);
     expect(parsed.hint).toContain('Import plugin');
     expect(parsed.supportedCommands).toContain('create_frame');
+    expect(parsed.supportedCommands).toContain('group_nodes');
+    expect(parsed.supportedCommands).toContain('rename_node');
   });
 
   it('execute_plugin_command queues/fails cleanly without a plugin', async () => {

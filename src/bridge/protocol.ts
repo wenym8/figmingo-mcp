@@ -70,6 +70,8 @@ export const PLUGIN_COMMANDS = [
   'insert_image',
   'move_node',
   'resize_node',
+  'group_nodes',
+  'rename_node',
   'delete_node',
   'get_selection',
   'get_file_info',
@@ -97,6 +99,9 @@ export type PluginCommandName = (typeof PLUGIN_COMMANDS)[number];
  *   explicit error), scaleMode, cornerRadius, stroke params, opacity.
  * - set_fills / set_effects: nodeId + payload; set_fills reads the fills back
  *   and returns a `warning` when Figma silently kept the previous value.
+ * - group_nodes: nodeIds (non-empty array of nodes with the same parent),
+ *   optional name and index. Returns the new group nodeId and selects the group.
+ * - rename_node: nodeId + non-empty name. Returns the updated name.
  * - export_node: nodeId, format (PNG|JPG|SVG|PDF), scale. Returns base64 by
  *   default; pass an absolute `outPath` to have the SERVER write the bytes to
  *   disk and return { path, bytes } instead of inline base64.

@@ -118,6 +118,17 @@ beforeAll(async () => {
     createFrame: () => makeNode('FRAME'),
     createRectangle: () => makeNode('RECTANGLE'),
     createText: () => makeNode('TEXT'),
+    group: (nodes: any[], parent: any, index?: number) => {
+      const group = makeNode('GROUP');
+      const grouped = new Set(nodes);
+      parent.children = parent.children.filter((node: any) => !grouped.has(node));
+      group.children = [...nodes];
+      group.parent = parent;
+      for (const node of nodes) node.parent = group;
+      if (index === undefined) parent.children.push(group);
+      else parent.children.splice(index, 0, group);
+      return group;
+    },
     createImage: () => {
       createImageCalls++;
       return { hash: 'hash-abc123' };
@@ -731,5 +742,80 @@ describe('metric compensation (fallback-font width drift)', () => {
     } finally {
       figma.__autoSizeTexts = false;
     }
+  });
+});
+
+
+describe('plugin code.ts — node organization commands', () => {
+  it('group_nodes groups nodes, names the group, and selects it', async () => {
+    const figma = (globalThis as any).figma;
+    const parent = makeNode('FRAME');
+    const ellipse = makeNode('ELLIPSE');
+    const rectangle = makeNode('RECTANGLE');
+    ellipse.parent = parent;
+    rectangle.parent = parent;
+    parent.children = [ellipse, rectangle];
+    figma.currentPage.appendChild(parent);
+
+    const msgs = await runCommand('g1', 'group_nodes', {
+      nodeIds: [ellipse.id, rectangle.id],
+      name: 'button_stop',
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+
+    expect(result?.ok).toBe(true);
+    expect(result?.result.name).toBe('button_stop');
+    expect(result?.result.childIds).toEqual([ellipse.id, rectangle.id]);
+    expect(parent.children).toHaveLength(1);
+    expect(parent.children[0].type).toBe('GROUP');
+    expect(parent.children[0].children).toEqual([ellipse, rectangle]);
+    expect(ellipse.parent).toBe(parent.children[0]);
+    expect(rectangle.parent).toBe(parent.children[0]);
+    expect(figma.currentPage.selection).toEqual([parent.children[0]]);
+  });
+
+  it('rename_node updates and returns the node name', async () => {
+    const figma = (globalThis as any).figma;
+    const node = makeNode('RECTANGLE');
+    figma.currentPage.appendChild(node);
+
+    const msgs = await runCommand('g2', 'rename_node', { nodeId: node.id, name: 'button_stop' });
+    const result = msgs.find((m) => m.type === 'command-result');
+
+    expect(result?.ok).toBe(true);
+    expect(result?.result).toEqual({ nodeId: node.id, name: 'button_stop' });
+    expect(node.name).toBe('button_stop');
+  });
+
+  it('group_nodes rejects nodes with different parents without changing them', async () => {
+    const figma = (globalThis as any).figma;
+    const firstParent = makeNode('FRAME');
+    const secondParent = makeNode('FRAME');
+    const first = makeNode('ELLIPSE');
+    const second = makeNode('RECTANGLE');
+    first.parent = firstParent;
+    second.parent = secondParent;
+    firstParent.children = [first];
+    secondParent.children = [second];
+    figma.currentPage.appendChild(firstParent);
+    figma.currentPage.appendChild(secondParent);
+
+    const msgs = await runCommand('g3', 'group_nodes', { nodeIds: [first.id, second.id] });
+    const result = msgs.find((m) => m.type === 'command-result');
+
+    expect(result?.ok).toBe(false);
+    expect(result?.error).toMatch(/same parent/);
+    expect(firstParent.children).toEqual([first]);
+    expect(secondParent.children).toEqual([second]);
+  });
+
+  it('group_nodes and rename_node validate required parameters', async () => {
+    const grouped = await runCommand('g4', 'group_nodes', { nodeIds: [] });
+    expect(grouped.find((m) => m.type === 'command-result')?.error).toMatch(/non-empty array/);
+
+    const node = makeNode('RECTANGLE');
+    (globalThis as any).figma.currentPage.appendChild(node);
+    const renamed = await runCommand('g5', 'rename_node', { nodeId: node.id, name: '  ' });
+    expect(renamed.find((m) => m.type === 'command-result')?.error).toMatch(/non-empty string/);
   });
 });
