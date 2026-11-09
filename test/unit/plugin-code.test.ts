@@ -959,3 +959,41 @@ describe('plugin code.ts — hierarchy editing commands', () => {
     expect(figma.currentPage.selection).toEqual([copy]);
   });
 });
+
+
+describe('plugin code.ts — duplicate position regression', () => {
+  it('duplicate_node within the same parent applies offsets without recomputing from a stale clone transform', async () => {
+    const figma = (globalThis as any).figma;
+    const parent = makeNode('FRAME');
+    const original = makeNode('RECTANGLE');
+    parent.x = 80;
+    parent.y = 80;
+    original.x = 50;
+    original.y = 603;
+    attachChild(parent, original);
+    figma.currentPage.appendChild(parent);
+    original.clone = () => {
+      const copy = makeNode('RECTANGLE');
+      copy.x = original.x;
+      copy.y = original.y;
+      attachChild(original.parent, copy);
+      Object.defineProperty(copy, 'absoluteTransform', { value: [[1, 0, 0], [0, 1, 0]], configurable: true });
+      return copy;
+    };
+
+    const msgs = await runCommand('h5', 'duplicate_node', {
+      nodeId: original.id,
+      name: 'button_previous',
+      offsetX: 199,
+      offsetY: 0,
+    });
+    const result = msgs.find((m) => m.type === 'command-result');
+    const copy = parent.children.at(-1);
+
+    expect(result?.ok).toBe(true);
+    expect(result?.result.x).toBe(249);
+    expect(result?.result.y).toBe(603);
+    expect(copy.x).toBe(249);
+    expect(copy.y).toBe(603);
+  });
+});

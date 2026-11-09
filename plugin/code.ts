@@ -193,12 +193,17 @@ function absolutePosition(node: any) {
   return { x: node.x ?? 0, y: node.y ?? 0 };
 }
 
-function moveToParent(node: any, parent: any, index: number | undefined, preservePosition: boolean) {
+function moveToParent(
+  node: any,
+  parent: any,
+  index: number | undefined,
+  preservePosition: boolean,
+  position = absolutePosition(node),
+) {
   if (node === parent) throw new Error('set_parent: node cannot be moved into itself');
   for (let current = parent; current; current = current.parent) {
     if (current === node) throw new Error('set_parent: cannot move a node into its descendant');
   }
-  const position = absolutePosition(node);
   if (index === undefined) parent.appendChild(node);
   else parent.insertChild(index, node);
   if (preservePosition) {
@@ -524,9 +529,12 @@ const handlers: Record<string, (params: any, vars: Map<string, string>, ctx?: Ru
   async duplicate_node(params, vars) {
     const node = findNode(params.nodeId) as SceneNode;
     const clone = node.clone();
-    const parent = params.parentId ? parentOf(params, vars) : clone.parent;
+    const cloneParent = clone.parent;
+    const parent = params.parentId ? parentOf(params, vars) : cloneParent;
     if (!parent) throw new Error('duplicate_node: cloned node has no parent');
-    moveToParent(clone, parent, params.index, params.preservePosition !== false);
+    if (parent !== cloneParent || params.index !== undefined) {
+      moveToParent(clone, parent, params.index, params.preservePosition !== false, absolutePosition(node));
+    }
     if (params.name !== undefined) clone.name = String(params.name);
     if (params.offsetX !== undefined) clone.x += Number(params.offsetX);
     if (params.offsetY !== undefined) clone.y += Number(params.offsetY);

@@ -179,14 +179,13 @@ function absolutePosition(node) {
     }
     return { x: node.x ?? 0, y: node.y ?? 0 };
 }
-function moveToParent(node, parent, index, preservePosition) {
+function moveToParent(node, parent, index, preservePosition, position = absolutePosition(node)) {
     if (node === parent)
         throw new Error('set_parent: node cannot be moved into itself');
     for (let current = parent; current; current = current.parent) {
         if (current === node)
             throw new Error('set_parent: cannot move a node into its descendant');
     }
-    const position = absolutePosition(node);
     if (index === undefined)
         parent.appendChild(node);
     else
@@ -557,10 +556,13 @@ const handlers = {
     async duplicate_node(params, vars) {
         const node = findNode(params.nodeId);
         const clone = node.clone();
-        const parent = params.parentId ? parentOf(params, vars) : clone.parent;
+        const cloneParent = clone.parent;
+        const parent = params.parentId ? parentOf(params, vars) : cloneParent;
         if (!parent)
             throw new Error('duplicate_node: cloned node has no parent');
-        moveToParent(clone, parent, params.index, params.preservePosition !== false);
+        if (parent !== cloneParent || params.index !== undefined) {
+            moveToParent(clone, parent, params.index, params.preservePosition !== false, absolutePosition(node));
+        }
         if (params.name !== undefined)
             clone.name = String(params.name);
         if (params.offsetX !== undefined)
